@@ -17,56 +17,6 @@ from app.models import (
     ReauthEvent,
 )
 
-# In-memory SQLite engine for fast, isolated unit testing
-TEST_DATABASE_URL = "sqlite:///:memory:"
-
-test_engine = create_engine(
-    TEST_DATABASE_URL,
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
-)
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
-
-
-@pytest.fixture(scope="session", autouse=True)
-def setup_test_db():
-    """Create all tables in the test database once for the test session."""
-    Base.metadata.create_all(bind=test_engine)
-    # Seed default roles
-    db = TestingSessionLocal()
-    admin_role = Role(name="admin", description="Admin role")
-    user_role = Role(name="user", description="User role")
-    db.add_all([admin_role, user_role])
-    db.commit()
-    db.close()
-    yield
-    Base.metadata.drop_all(bind=test_engine)
-
-
-@pytest.fixture
-def db_session():
-    """Provide a transactional database session for tests."""
-    db = TestingSessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-@pytest.fixture
-def client(db_session):
-    """FastAPI TestClient with overridden get_db dependency."""
-    def override_get_db():
-        try:
-            yield db_session
-        finally:
-            pass
-
-    fastapi_app.dependency_overrides[get_db] = override_get_db
-    with TestClient(fastapi_app) as test_client:
-        yield test_client
-    fastapi_app.dependency_overrides.clear()
-
 
 class TestDatabaseModels:
     """Verifies that all 7 required database tables exist with proper constraints."""

@@ -25,3 +25,4 @@ Proyecto: Back-end seguro con reautenticación adaptativa basada en dinámica de
 1. Nunca guardes vectores biométricos en texto plano en PostgreSQL. Usa siempre `vector_encrypted` (BYTEA) con AES-256-GCM.
 2. Nunca almacenes las teclas presionadas (texto), solo tiempos de vuelo y presión (minimización de datos RNF-08).
 3. Cada vez que crees un endpoint o módulo, escribe su prueba correspondiente en `tests/` y ejecútala con `pytest`.
+4. PROHIBIDO EJECUTAR DOCKER: No ejecutes comandos `docker` ni `docker-compose` en la terminal porque el disco local tiene poco espacio. Ejecuta todas las verificaciones únicamente con `.venv\Scripts\pytest` usando SQLite en memoria.

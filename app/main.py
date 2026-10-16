@@ -10,6 +10,8 @@ from app.database import engine, Base, SessionLocal, get_db
 # Import all models to ensure they are registered with Base.metadata
 import app.models  # noqa: F401
 from app.models import Role
+from app.auth.router import router as auth_router
+from app.authorization.router import router as admin_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("zero_trust_api")
@@ -55,6 +57,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Register API Routers
+app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
+app.include_router(admin_router, prefix="/api/admin", tags=["Administration"])
+
 
 @app.get("/health", status_code=status.HTTP_200_OK, tags=["Health"])
 def health_check(db: Session = Depends(get_db)) -> Dict[str, Any]:
@@ -68,3 +74,4 @@ def health_check(db: Session = Depends(get_db)) -> Dict[str, Any]:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"status": "error", "db": "disconnected", "error": str(exc)},
         )
+

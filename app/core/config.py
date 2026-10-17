@@ -36,6 +36,16 @@ class Settings(BaseSettings):
     # AES-256-GCM Master Key (32 bytes = 64 hex characters)
     AES_MASTER_KEY: str = "1d9ae387b1344cf4f972226bf26edfaed57494d2026c12688583721b9cfec597"
 
+    # Zero Trust Continuous Reauthentication & Risk Engine
+    REAUTH_TIMEOUT_MINUTES: int = 10
+    CHALLENGE_NONCE_TTL_SECONDS: int = 300
+    REAUTH_TARGET_PHRASE: str = "tie5Roanl"
+
+    # Rate Limiting (RNF-03)
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_MAX_REQUESTS: int = 5
+    RATE_LIMIT_WINDOW_SECONDS: int = 60
+
     @property
     def AES_KEY_BYTES(self) -> bytes:
         key_bytes = bytes.fromhex(self.AES_MASTER_KEY)

@@ -12,6 +12,12 @@ from app.schemas.schemas import (
     KeystrokeVerifyRequest,
     KeystrokeVerifyResponse,
     KeystrokeStatusResponse,
+    ReauthEvaluateResponse,
+    ReauthChallengeResponse,
+    ReauthVerifyRequest,
+    ReauthVerifyResponse,
+    SensitiveActionRequest,
+    SensitiveActionResponse,
 )
 
 __all__ = [
@@ -26,4 +32,10 @@ __all__ = [
     "KeystrokeVerifyRequest",
     "KeystrokeVerifyResponse",
     "KeystrokeStatusResponse",
+    "ReauthEvaluateResponse",
+    "ReauthChallengeResponse",
+    "ReauthVerifyRequest",
+    "ReauthVerifyResponse",
+    "SensitiveActionRequest",
+    "SensitiveActionResponse",
 ]

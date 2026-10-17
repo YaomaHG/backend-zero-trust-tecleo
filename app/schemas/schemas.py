@@ -103,3 +103,57 @@ class KeystrokeStatusResponse(BaseModel):
     user_id: int
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+
+class ReauthEvaluateResponse(BaseModel):
+    """Schema for continuous risk assessment response (RF-04, CP-S07)."""
+    reauth_required: bool
+    risk_event: Optional[str] = None
+    detail: Optional[str] = None
+    current_ip: Optional[str] = None
+    session_ip: Optional[str] = None
+    challenge_nonce: Optional[str] = None
+
+
+class ReauthChallengeResponse(BaseModel):
+    """Schema for challenge nonce generation (CP-S04)."""
+    challenge_nonce: str
+    target_phrase: str
+    expires_in: int
+
+
+class ReauthVerifyRequest(BaseModel):
+    """Schema for adaptive reauthentication verification (RF-04, RF-05, CP-S04, CP-S08)."""
+    risk_event: str = Field(..., description="Risk trigger: 'ip_change', 'sensitive_operation', 'session_timeout', etc.")
+    challenge_nonce: Optional[str] = Field(None, description="One-time anti-replay challenge nonce (CP-S04)")
+    timestamp: Optional[float] = Field(None, description="Client submission timestamp in seconds or milliseconds")
+    vector: Optional[List[float]] = Field(None, description="Biometric timing feature vector")
+    raw_events: Optional[List[Dict[str, float]]] = Field(None, description="Raw timing events (press/release)")
+
+
+class ReauthVerifyResponse(BaseModel):
+    """Schema for reauthentication response."""
+    match: bool
+    score: float
+    threshold: float
+    reauth_status: str
+    message: Optional[str] = None
+    session_revoked: bool = False
+
+
+class SensitiveActionRequest(BaseModel):
+    """Schema for sensitive corporate action request (Section 3.3)."""
+    action_type: str = Field("simulated_transfer", description="Action identifier: 'simulated_transfer', 'config_update'")
+    amount: Optional[float] = Field(None, description="Simulated monetary amount")
+    destination_account: Optional[str] = Field(None, description="Destination account or resource ID")
+    details: Optional[Dict[str, Any]] = None
+
+
+class SensitiveActionResponse(BaseModel):
+    """Schema for sensitive corporate action execution response."""
+    status: str
+    operation: str
+    message: str
+    executed_at: datetime
+    details: Optional[Dict[str, Any]] = None
+

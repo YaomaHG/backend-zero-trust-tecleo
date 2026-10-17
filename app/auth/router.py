@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.audit.service import get_client_ip, log_audit_event
 from app.auth.dependencies import get_current_user, is_account_locked
 from app.core.config import settings
+from app.core.rate_limiter import check_rate_limit
 from app.core.security import create_access_token, hash_password, verify_password
 from app.database import get_db
 from app.models import Role, Session as UserSession, User
@@ -83,6 +84,7 @@ def login(
     request: Request,
     response: Response,
     db: Session = Depends(get_db),
+    _rate_limit: None = Depends(check_rate_limit),
 ) -> TokenResponse:
     """Authenticates credentials with brute-force lockout protection and session creation."""
     client_ip = get_client_ip(request)
@@ -184,6 +186,7 @@ def login(
         ip_address=client_ip,
         expires_at=expires_at,
         revoked=False,
+        last_biometric_verified_at=datetime.now(timezone.utc),
     )
     db.add(session_record)
     db.commit()

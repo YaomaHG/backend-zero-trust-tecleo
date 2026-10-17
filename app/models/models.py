@@ -152,6 +152,12 @@ class Session(Base):
     )
     expires_at = Column(DateTime(timezone=True), nullable=False)
     revoked = Column(Boolean, default=False, nullable=False)
+    last_biometric_verified_at = Column(
+        DateTime(timezone=True),
+        default=func.now(),
+        server_default=func.now(),
+        nullable=True,
+    )
 
     user = relationship("User", back_populates="sessions")
     reauth_events = relationship(

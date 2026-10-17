@@ -12,6 +12,7 @@ import app.models  # noqa: F401
 from app.models import Role
 from app.auth.router import router as auth_router
 from app.authorization.router import router as admin_router
+from app.biometric.router import router as biometric_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("zero_trust_api")
@@ -60,6 +61,7 @@ app = FastAPI(
 # Register API Routers
 app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(admin_router, prefix="/api/admin", tags=["Administration"])
+app.include_router(biometric_router, prefix="/api/biometric", tags=["Biometrics"])
 
 
 @app.get("/health", status_code=status.HTTP_200_OK, tags=["Health"])

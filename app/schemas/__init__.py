@@ -8,6 +8,10 @@ from app.schemas.schemas import (
     UserResponse,
     TokenResponse,
     AuditLogResponse,
+    KeystrokeEnrollRequest,
+    KeystrokeVerifyRequest,
+    KeystrokeVerifyResponse,
+    KeystrokeStatusResponse,
 )
 
 __all__ = [
@@ -18,4 +22,8 @@ __all__ = [
     "UserResponse",
     "TokenResponse",
     "AuditLogResponse",
+    "KeystrokeEnrollRequest",
+    "KeystrokeVerifyRequest",
+    "KeystrokeVerifyResponse",
+    "KeystrokeStatusResponse",
 ]

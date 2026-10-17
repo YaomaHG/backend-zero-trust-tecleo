@@ -64,6 +64,11 @@ venv.bak/
 *.h5
 *.pt
 *.pth
+!ml_models/keystroke_gb_model.pkl
+
+# Data & Documentation Metrics
+!data/
+!docs/
 
 # IDEs & OS files
 .vscode/

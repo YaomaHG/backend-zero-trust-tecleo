@@ -74,3 +74,32 @@ class AuditLogResponse(BaseModel):
     timestamp: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class KeystrokeEnrollRequest(BaseModel):
+    """Schema for keystroke profile enrollment (RF-03, RNF-08)."""
+    vector: Optional[List[float]] = Field(None, description="Direct feature vector of timing dynamics")
+    samples: Optional[List[List[float]]] = Field(None, description="Multiple sample vectors to calculate mean template")
+    raw_events: Optional[List[Dict[str, float]]] = Field(None, description="Raw timing events (press/release) without key characters")
+
+
+class KeystrokeVerifyRequest(BaseModel):
+    """Schema for keystroke verification sample (RF-05, RNF-08)."""
+    vector: Optional[List[float]] = Field(None, description="Verification timing feature vector")
+    raw_events: Optional[List[Dict[str, float]]] = Field(None, description="Raw timing events (press/release) without key characters")
+
+
+class KeystrokeVerifyResponse(BaseModel):
+    """Schema for biometric verification result."""
+    match: bool
+    score: float
+    threshold: float
+    message: Optional[str] = None
+
+
+class KeystrokeStatusResponse(BaseModel):
+    """Schema for biometric enrollment status response."""
+    enrolled: bool
+    user_id: int
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None

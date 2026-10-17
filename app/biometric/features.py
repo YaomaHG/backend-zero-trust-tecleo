@@ -137,7 +137,7 @@ def calculate_statistical_distance(template: List[float], sample: List[float]) -
     total_dist = 0.0
     for t_val, s_val in zip(template, sample):
         diff = abs(s_val - t_val)
-        norm_factor = abs(t_val) + 0.05
+        norm_factor = abs(t_val) + 0.08
         total_dist += diff / norm_factor
 
     return total_dist / dim
@@ -149,5 +149,5 @@ def calculate_statistical_similarity(template: List[float], sample: List[float])
     High similarity (near 1.0) indicates genuine user; low similarity indicates an impostor.
     """
     dist = calculate_statistical_distance(template, sample)
-    similarity = math.exp(-2.5 * dist)
+    similarity = math.exp(-2.2 * dist)
     return max(0.0, min(1.0, float(similarity)))

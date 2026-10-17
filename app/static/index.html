@@ -275,17 +275,21 @@
                             <input type="text" id="sim-spoofed-ip" class="form-input mono" value="189.203.45.12" placeholder="Ej: 189.203.45.12 o 200.1.2.3">
                         </div>
 
-                        <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+                        <div style="display: flex; gap: 0.5rem; margin-bottom: 0.75rem;">
                             <button type="button" id="btn-toggle-sim-ip" class="btn btn-secondary btn-sm" style="flex: 1;">
-                                🌐 Inyectar IP Foránea
+                                🌐 Simular Cambio de IP
                             </button>
                             <button type="button" id="btn-reset-sim-ip" class="btn btn-secondary btn-sm" style="flex: 1;">
                                 ↩️ Restaurar IP Local
                             </button>
                         </div>
 
-                        <button type="button" id="btn-eval-risk" class="btn btn-secondary btn-block" style="margin-bottom: 1rem;">
-                            🔍 Evaluar Riesgo en Tiempo Real (GET /evaluate)
+                        <button type="button" id="btn-eval-risk" class="btn btn-secondary btn-block" style="margin-bottom: 0.75rem;">
+                            🔍 Evaluar Riesgo Zero Trust (/evaluate)
+                        </button>
+
+                        <button type="button" id="btn-force-reauth-demo" class="btn btn-primary btn-block" style="background: linear-gradient(135deg, #f59e0b, #d97706); border-color: #d97706; margin-bottom: 1rem;">
+                            ⚡ Forzar Modal de Reautenticación (Demo)
                         </button>
 
                         <div style="border-top: 1px solid var(--border-subtle); padding-top: 0.85rem; font-size: 0.78rem; color: var(--text-muted);">

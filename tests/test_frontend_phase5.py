@@ -220,7 +220,7 @@ def test_complete_e2e_frontend_flow(client: TestClient, db_session):
     challenge_data = challenge_resp.json()
     nonce = challenge_data["challenge_nonce"]
     assert len(nonce) > 16
-    assert challenge_data["target_phrase"] == "tie5Roanl"
+    assert challenge_data["target_phrase"] == ".tie5Roanl"
     assert challenge_data["expires_in"] == 300
 
     # -------------------------------------------------------------

@@ -562,18 +562,20 @@ h1, h2, h3, h4 {
     bottom: 0;
     background: rgba(5, 7, 14, 0.85);
     backdrop-filter: blur(12px);
-    display: flex;
+    display: none;
     align-items: center;
     justify-content: center;
-    z-index: 100;
+    z-index: 9999;
     opacity: 0;
     pointer-events: none;
     transition: opacity var(--transition-normal);
 }
 
 .modal-backdrop.open {
-    opacity: 1;
-    pointer-events: all;
+    display: flex !important;
+    opacity: 1 !important;
+    pointer-events: all !important;
+    z-index: 9999 !important;
 }
 
 .modal-dialog {

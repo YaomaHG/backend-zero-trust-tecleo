@@ -139,6 +139,8 @@ class ReauthVerifyResponse(BaseModel):
     reauth_status: str
     message: Optional[str] = None
     session_revoked: bool = False
+    attempts_remaining: Optional[int] = None
+    new_nonce: Optional[str] = None
 
 
 class SensitiveActionRequest(BaseModel):

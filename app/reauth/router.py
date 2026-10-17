@@ -106,6 +106,7 @@ def evaluate_risk(
                 "reauth_required": True,
                 "risk_event": risk_info["risk_event"],
                 "detail": risk_info["reason"],
+                "message": risk_info["reason"],
                 "current_ip": client_ip,
                 "session_ip": session.ip_address,
             },
@@ -183,6 +184,9 @@ def verify_reauth(
         raw_events=payload.raw_events,
     )
 
+    if isinstance(result, JSONResponse):
+        return result
+
     return ReauthVerifyResponse(**result)
 
 
@@ -220,12 +224,16 @@ def execute_sensitive_action(
                 "action": action_in.action_type,
             },
         )
+        msg = f"IP change detected from {session.ip_address} to {client_ip}. Reauthentication required before executing sensitive operations."
         return JSONResponse(
             status_code=status.HTTP_403_FORBIDDEN,
             content={
                 "reauth_required": True,
                 "risk_event": "ip_change",
-                "detail": f"IP change detected from {session.ip_address} to {client_ip}. Reauthentication required before executing sensitive operations.",
+                "detail": msg,
+                "message": msg,
+                "current_ip": client_ip,
+                "session_ip": session.ip_address,
             },
         )
 
@@ -252,12 +260,16 @@ def execute_sensitive_action(
             ip_address=client_ip,
             details={"action": action_in.action_type},
         )
+        op_msg = "Sensitive corporate operation requires recent biometric reauthentication."
         return JSONResponse(
             status_code=status.HTTP_403_FORBIDDEN,
             content={
                 "reauth_required": True,
                 "risk_event": "sensitive_operation",
-                "detail": "Sensitive corporate operation requires recent biometric reauthentication.",
+                "detail": op_msg,
+                "message": op_msg,
+                "current_ip": client_ip,
+                "session_ip": session.ip_address,
             },
         )
 

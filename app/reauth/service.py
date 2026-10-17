@@ -204,6 +204,9 @@ def evaluate_session_risk(
     }
 
 
+from fastapi.responses import JSONResponse
+
+
 def verify_reauthentication(
     db: Session,
     user: User,
@@ -214,14 +217,14 @@ def verify_reauthentication(
     timestamp: Optional[float] = None,
     vector: Optional[List[float]] = None,
     raw_events: Optional[List[Dict[str, float]]] = None,
-) -> Dict[str, Any]:
+) -> Any:
     """
     Executes Zero Trust adaptive step-up reauthentication:
     1. Validates Anti-Replay protection (CP-S04).
     2. Compares keystroke dynamics against stored template (RF-05).
     3. Records result to reauth_events and audit_log.
     4. On success: updates session trust and IP.
-    5. On failure / impostor: revokes session on critical anomaly (RF-08, CP-S08).
+    5. On failure / impostor: revokes session on extreme anomaly or 3rd failed attempt (RF-08, CP-S08).
     """
     # 1. Anti-Replay Validation (CP-S04)
     nonce_valid = anti_replay_store.validate_and_consume_nonce(challenge_nonce, user.id, session.id)
@@ -253,9 +256,18 @@ def verify_reauthentication(
         db.add(reauth_record)
         db.commit()
 
-        raise HTTPException(
+        return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Replay attack detected: Challenge nonce or biometric sample has already been used or expired.",
+            content={
+                "detail": "Replay attack detected: Challenge nonce or biometric sample has already been used or expired.",
+                "match": False,
+                "score": 0.0,
+                "threshold": round(float(biometric_service.optimal_threshold), 4),
+                "reauth_status": "replay_attack",
+                "session_revoked": False,
+                "attempts_remaining": 0,
+                "new_nonce": None,
+            },
         )
 
     # 2. Verify keystroke dynamics pattern
@@ -267,8 +279,8 @@ def verify_reauthentication(
     )
 
     match = biometric_result["match"]
-    score = biometric_result["score"]
-    threshold = biometric_result["threshold"]
+    score = float(biometric_result["score"])
+    threshold = float(biometric_result["threshold"])
 
     # 3. Persist reauth event record
     reauth_entry = ReauthEvent(
@@ -308,28 +320,72 @@ def verify_reauthentication(
             "reauth_status": "success",
             "message": "Biometric reauthentication verified successfully. Trust level updated.",
             "session_revoked": False,
+            "attempts_remaining": 3,
+            "new_nonce": None,
         }
 
     # 6. Handle failure / Impostor (CP-S08, RF-08)
-    # Severe anomaly or impostor during reauthentication triggers session revocation
-    session.revoked = True
-    db.commit()
-
-    log_audit_event(
-        db=db,
-        event_type="session_revoked_biometric_failure",
-        user_id=user.id,
-        ip_address=client_ip,
-        details={
-            "session_id": session.id,
-            "risk_event": risk_event,
-            "score": score,
-            "threshold": threshold,
-            "reason": "impostor_keystroke_pattern_detected",
-        },
+    failed_attempts = (
+        db.query(ReauthEvent)
+        .filter(
+            ReauthEvent.session_id == session.id,
+            ReauthEvent.user_id == user.id,
+            ReauthEvent.result.is_(False),
+        )
+        .count()
     )
 
-    raise HTTPException(
+    # Extreme attacks (blatant impostors or severely distorted timing) revoke immediately
+    is_extreme_attack = (score < 0.10)
+    should_revoke = is_extreme_attack or (failed_attempts >= 3)
+
+    if should_revoke:
+        session.revoked = True
+        db.commit()
+
+        log_audit_event(
+            db=db,
+            event_type="session_revoked_biometric_failure",
+            user_id=user.id,
+            ip_address=client_ip,
+            details={
+                "session_id": session.id,
+                "risk_event": risk_event,
+                "score": score,
+                "threshold": threshold,
+                "failed_attempts": failed_attempts,
+                "reason": "impostor_keystroke_pattern_detected",
+            },
+        )
+
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content={
+                "detail": "Biometric reauthentication failed: Impostor keystroke pattern detected. Session has been revoked.",
+                "match": False,
+                "score": score,
+                "threshold": threshold,
+                "reauth_status": "failed",
+                "session_revoked": True,
+                "attempts_remaining": 0,
+                "new_nonce": None,
+            },
+        )
+
+    # Non-extreme failure: allow up to 3 attempts without revoking session
+    new_nonce = anti_replay_store.generate_challenge(user.id, session.id)
+    attempts_remaining = max(0, 3 - failed_attempts)
+
+    return JSONResponse(
         status_code=status.HTTP_403_FORBIDDEN,
-        detail="Biometric reauthentication failed: Impostor keystroke pattern detected. Session has been revoked.",
+        content={
+            "detail": f"Biometric reauthentication failed: score below threshold. Intentos restantes: {attempts_remaining}.",
+            "match": False,
+            "score": score,
+            "threshold": threshold,
+            "reauth_status": "retry",
+            "session_revoked": False,
+            "attempts_remaining": attempts_remaining,
+            "new_nonce": new_nonce,
+        },
     )

@@ -92,6 +92,7 @@
         btnToggleSimIp: document.getElementById("btn-toggle-sim-ip"),
         btnResetSimIp: document.getElementById("btn-reset-sim-ip"),
         btnEvalRisk: document.getElementById("btn-eval-risk"),
+        btnForceReauthDemo: document.getElementById("btn-force-reauth-demo"),
 
         // Admin
         adminUsersTbody: document.getElementById("admin-users-tbody"),
@@ -155,14 +156,14 @@
         try {
             const response = await fetch(url, options);
 
-            // Handle Zero Trust Continuous Challenge interception (403 Forbidden with reauth_required)
-            if (response.status === 403) {
+            // Handle Zero Trust Continuous Challenge interception (403 Forbidden or 428 Precondition Required)
+            if (response.status === 403 || response.status === 428) {
                 const clone = response.clone();
                 try {
                     const data = await clone.json();
-                    const detail = data.detail || data;
-                    if (detail && detail.reauth_required) {
-                        handleZeroTrustRiskTrigger(detail);
+                    const reauthData = data?.reauth_required ? data : data?.detail;
+                    if (reauthData && reauthData.reauth_required) {
+                        openReauthModal(reauthData);
                         return response;
                     }
                 } catch (_) {
@@ -410,9 +411,13 @@
                 const data = await resp.json();
 
                 if (resp.ok) {
+                    const rawScore = typeof data.score === "number" ? data.score : parseFloat(data.score);
+                    const rawThresh = typeof data.threshold === "number" ? data.threshold : parseFloat(data.threshold);
+                    const sPct = !isNaN(rawScore) ? (rawScore * 100).toFixed(2) : "0.00";
+                    const tPct = !isNaN(rawThresh) ? (rawThresh * 100).toFixed(2) : "40.24";
                     const matchText = data.match ? "COINCIDENCIA GENUINA" : "DESVIACIÓN DETECTADA (IMPOSTOR)";
                     const alertType = data.match ? "success" : "danger";
-                    showAlert(`Resultado de Verificación Biométrica: ${matchText} | Score: ${(data.score * 100).toFixed(2)}% (Umbral θ*: ${(data.threshold * 100).toFixed(2)}%)`, alertType, 8000);
+                    showAlert(`Resultado de Verificación Biométrica: ${matchText} | Score: ${sPct}% (Umbral θ*: ${tPct}%)`, alertType, 8000);
                 } else {
                     showAlert(data.detail || "Error en verificación biométrica.", "danger");
                 }
@@ -458,25 +463,42 @@
     }
 
     /**
-     * Handles Zero Trust risk trigger (detonated by backend 403 reauth_required).
+     * Handles Zero Trust risk trigger (detonated by backend 403/428 reauth_required or manual trigger).
      */
-    async function handleZeroTrustRiskTrigger(detail) {
-        state.currentRiskEvent = detail.risk_event || "sensitive_operation";
-        setTrustStatus("warning", "REAUTENTICACIÓN REQUERIDA (40%)", detail.detail || detail.message);
+    async function openReauthModal(reauthData = {}) {
+        const riskEvent = reauthData.risk_event || state.currentRiskEvent || "sensitive_operation";
+        const riskDetail = (typeof reauthData.detail === "string" ? reauthData.detail : null) ||
+                           reauthData.message ||
+                           "Se requiere validación de identidad biométrica bajo principios Zero Trust.";
 
-        // Open Adaptive Challenge Modal
-        await openAdaptiveReauthModal(state.currentRiskEvent, detail.detail || detail.message);
+        state.currentRiskEvent = riskEvent;
+        setTrustStatus("warning", "REAUTENTICACIÓN REQUERIDA (40%)", riskDetail);
+
+        await openAdaptiveReauthModal(riskEvent, riskDetail);
+    }
+
+    function handleZeroTrustRiskTrigger(detail) {
+        return openReauthModal(detail);
     }
 
     /**
      * Opens Adaptive Reauth Modal, generates anti-replay nonce, and binds KeystrokeCapture.
      */
     async function openAdaptiveReauthModal(riskEvent, riskDetail) {
+        state.reauthFailures = 0;
         elements.reauthRiskTitle.textContent = `Riesgo de Contexto: ${riskEvent}`;
         elements.reauthRiskDetail.textContent = riskDetail || "Se requiere validación de identidad para continuar.";
         elements.reauthStatusResult.innerHTML = "";
         elements.reauthInput.value = "";
+        elements.reauthInput.placeholder = "Escribe .tie5Roanl y presiona Enter...";
         elements.btnSubmitReauth.disabled = true;
+
+        // Force modal visibility and layering (display: flex, opacity: 1, z-index: 9999, remove hidden)
+        elements.modalReauth.classList.remove("hidden");
+        elements.modalReauth.classList.add("open");
+        elements.modalReauth.style.display = "flex";
+        elements.modalReauth.style.opacity = "1";
+        elements.modalReauth.style.zIndex = "9999";
 
         // Fetch Anti-Replay Challenge Nonce from server (CP-S04)
         try {
@@ -501,6 +523,7 @@
         let capturedVector = null;
         if (state.reauthCapture) {
             state.reauthCapture.detach();
+            state.reauthCapture = null;
         }
 
         state.reauthCapture = new KeystrokeCapture({
@@ -513,7 +536,7 @@
             onSampleCaptured: (_, __, vector) => {
                 capturedVector = vector;
                 elements.btnSubmitReauth.disabled = false;
-                elements.reauthStatusResult.innerHTML = `<span style="color: var(--emerald-green); font-size: 0.82rem;">✓ Muestra capturada (${vector.length} dimensiones temporales). Haz clic en 'Verificar Dinámica' o pulsa Enter.</span>`;
+                elements.reauthStatusResult.innerHTML = `<span style="color: var(--emerald-green); font-size: 0.82rem;">✓ Muestra capturada (${vector.length} dimensiones temporales). Verificando dinámica...</span>`;
                 // Automatically submit for seamless user experience
                 submitReauthVerification(capturedVector);
             },
@@ -526,13 +549,25 @@
 
         // Submit button click
         elements.btnSubmitReauth.onclick = () => {
-            if (capturedVector) {
-                submitReauthVerification(capturedVector);
+            let vec = capturedVector;
+            if (!vec && state.reauthCapture) {
+                if (state.reauthCapture.currentKeySequence.length >= 10) {
+                    vec = state.reauthCapture.extractVector(state.reauthCapture.currentKeySequence);
+                } else {
+                    vec = state.reauthCapture.getLastVector();
+                }
+            }
+            if (vec && vec.length === 31) {
+                submitReauthVerification(vec);
+            } else {
+                showAlert("Escribe la frase requerida (.tie5Roanl) y presiona Enter para verificar.", "warning");
             }
         };
 
-        elements.modalReauth.classList.add("open");
-        setTimeout(() => elements.reauthInput.focus(), 150);
+        setTimeout(() => {
+            elements.reauthInput.value = "";
+            elements.reauthInput.focus();
+        }, 150);
     }
 
     /**
@@ -557,6 +592,14 @@
 
             const data = await resp.json();
 
+            // Safe numeric parsing for score and threshold - NEVER display NaN%
+            const rawScore = typeof data.score === "number" ? data.score : parseFloat(data.score);
+            const rawThreshold = typeof data.threshold === "number" ? data.threshold : parseFloat(data.threshold);
+            const scoreNum = !isNaN(rawScore) ? rawScore : 0.0;
+            const thresholdNum = !isNaN(rawThreshold) ? rawThreshold : 0.40;
+            const scorePct = (scoreNum * 100).toFixed(1);
+            const thresholdPct = (thresholdNum * 100).toFixed(1);
+
             if (resp.ok && data.match) {
                 // Legitimate user match
                 clearInterval(state.nonceCountdownTimer);
@@ -564,7 +607,7 @@
                     <div class="alert-banner success" style="margin: 0.5rem 0;">
                         <span>✅</span>
                         <div>
-                            <strong>Autenticación Exitosa:</strong> Score ${(data.score * 100).toFixed(1)}% vs Umbral ${(data.threshold * 100).toFixed(1)}%.
+                            <strong>Autenticación Exitosa:</strong> Score ${scorePct}% vs Umbral ${thresholdPct}%.
                             <br>Nivel de confianza Zero Trust restablecido a 100%.
                         </div>
                     </div>`;
@@ -574,26 +617,66 @@
                 setTimeout(() => {
                     closeAdaptiveReauthModal();
                     showAlert("Reautenticación completada. Tu operación ha sido autorizada.", "success", 6000);
+                    if (typeof state.reauthPendingAction === "function") {
+                        const action = state.reauthPendingAction;
+                        state.reauthPendingAction = null;
+                        action();
+                    }
                 }, 1200);
 
             } else {
-                // Impostor or verification failure (CP-S08: Session Revocation)
-                clearInterval(state.nonceCountdownTimer);
-                elements.reauthStatusResult.innerHTML = `
-                    <div class="alert-banner danger" style="margin: 0.5rem 0;">
-                        <span>🚨</span>
-                        <div>
-                            <strong>Acceso Denegado (CP-S08):</strong> Dinámica de tecleo anómala (Score: ${(data.score * 100).toFixed(1)}% < Umbral: ${(data.threshold * 100).toFixed(1)}%).
-                            <br>La sesión ha sido <strong>revocada</strong> inmediatamente por seguridad.
-                        </div>
-                    </div>`;
+                // Verification failure
+                state.reauthFailures = (state.reauthFailures || 0) + 1;
+                const attemptsRemaining = (typeof data.attempts_remaining === "number")
+                    ? data.attempts_remaining
+                    : Math.max(0, 3 - state.reauthFailures);
 
-                setTrustStatus("revoked", "SESIÓN REVOCADA (0%)", "Impostor detectado en reautenticación");
+                if (!data.session_revoked && attemptsRemaining > 0) {
+                    // Non-revoking retry: renew nonce and allow retyping
+                    if (data.new_nonce) {
+                        state.currentNonce = data.new_nonce;
+                        elements.reauthNonceBadge.textContent = `${state.currentNonce.substring(0, 12)}...`;
+                        startNonceCountdown(300);
+                    }
 
-                setTimeout(() => {
-                    closeAdaptiveReauthModal();
-                    doLogout();
-                }, 3500);
+                    elements.reauthStatusResult.innerHTML = `
+                        <div class="alert-banner warning" style="margin: 0.5rem 0;">
+                            <span>⚠️</span>
+                            <div>
+                                <strong>Muestra no verificada:</strong> Score ${scorePct}% vs Umbral ${thresholdPct}%.
+                                <br>Te quedan <strong>${attemptsRemaining} intento(s)</strong> antes de revocar la sesión. Escribe nuevamente <code>${state.targetPhrase}</code> y presiona Enter.
+                            </div>
+                        </div>`;
+
+                    elements.reauthInput.value = "";
+                    if (state.reauthCapture) {
+                        state.reauthCapture.clearCurrentSample();
+                    }
+                    elements.btnSubmitReauth.disabled = false;
+                    setTimeout(() => {
+                        elements.reauthInput.focus();
+                    }, 200);
+
+                } else {
+                    // Severe anomaly or 3rd consecutive failed attempt -> Session Revocation (CP-S08)
+                    clearInterval(state.nonceCountdownTimer);
+                    elements.reauthStatusResult.innerHTML = `
+                        <div class="alert-banner danger" style="margin: 0.5rem 0;">
+                            <span>🚨</span>
+                            <div>
+                                <strong>Acceso Denegado (CP-S08):</strong> Dinámica de tecleo anómala (Score: ${scorePct}% < Umbral: ${thresholdPct}%).
+                                <br>Se han agotado los intentos permitidos. La sesión ha sido <strong>revocada</strong> inmediatamente por seguridad. Redirigiendo al Login...
+                            </div>
+                        </div>`;
+
+                    setTrustStatus("revoked", "SESIÓN REVOCADA (0%)", "Impostor detectado en reautenticación");
+
+                    // Requirement 4: Redirigir al Login tras 2 segundos
+                    setTimeout(() => {
+                        closeAdaptiveReauthModal();
+                        doLogout();
+                    }, 2000);
+                }
             }
         } catch (e) {
             elements.reauthStatusResult.innerHTML = `<span style="color: var(--crimson-danger);">Error: ${e.message}</span>`;
@@ -623,17 +706,22 @@
     }
 
     /**
-     * Closes the reauth modal.
+     * Closes the reauth modal and resets styling/handlers.
      */
     function closeAdaptiveReauthModal() {
         elements.modalReauth.classList.remove("open");
+        elements.modalReauth.style.display = "none";
+        elements.modalReauth.style.opacity = "";
+        elements.modalReauth.style.zIndex = "";
         clearInterval(state.nonceCountdownTimer);
         if (state.reauthCapture) {
             state.reauthCapture.detach();
+            state.reauthCapture = null;
         }
     }
 
     elements.btnCancelReauth.onclick = () => {
+        state.reauthPendingAction = null;
         closeAdaptiveReauthModal();
         showAlert("Desafío cancelado. La operación sensible no se ejecutó.", "warning");
     };
@@ -643,7 +731,13 @@
      */
     elements.formSensitiveAction.onsubmit = async (e) => {
         e.preventDefault();
+        executeSensitiveOperationFlow();
+    };
+
+    async function executeSensitiveOperationFlow() {
         elements.sensitiveOpResult.innerHTML = `<span style="color: var(--cyan-neon);">Ejecutando operación corporativa bajo políticas Zero Trust...</span>`;
+
+        state.reauthPendingAction = () => executeSensitiveOperationFlow();
 
         try {
             const resp = await apiFetch("/api/operations/sensitive-action", {
@@ -658,6 +752,7 @@
             const data = await resp.json();
 
             if (resp.ok) {
+                state.reauthPendingAction = null;
                 elements.sensitiveOpResult.innerHTML = `
                     <div class="alert-banner success">
                         <span>💰</span>
@@ -668,12 +763,13 @@
                     </div>`;
                 showAlert("Operación crítica ejecutada exitosamente.", "success");
             } else {
-                const detail = data.detail || data;
-                if (!detail.reauth_required) {
+                const reauthData = data?.reauth_required ? data : data?.detail;
+                if (!reauthData?.reauth_required) {
+                    state.reauthPendingAction = null;
                     elements.sensitiveOpResult.innerHTML = `
                         <div class="alert-banner danger">
                             <span>❌</span>
-                            <div>${detail || "Operación denegada."}</div>
+                            <div>${(typeof data.detail === "string" ? data.detail : null) || data.message || "Operación denegada."}</div>
                         </div>`;
                 } else {
                     elements.sensitiveOpResult.innerHTML = `
@@ -684,23 +780,28 @@
                 }
             }
         } catch (err) {
+            state.reauthPendingAction = null;
             elements.sensitiveOpResult.innerHTML = `<div class="alert-banner danger">Error: ${err.message}</div>`;
         }
-    };
+    }
 
     /**
      * Evaluates continuous session risk on demand.
      */
     elements.btnEvalRisk.onclick = async () => {
+        // If simulated IP is not active yet, use the value in the input to demonstrate risk trigger
+        if (!state.activeSimulatedIp && elements.simSpoofedIp.value.trim()) {
+            state.activeSimulatedIp = elements.simSpoofedIp.value.trim();
+            updateIpDisplay();
+        }
+
         try {
             const resp = await apiFetch("/api/reauth/evaluate");
             const data = await resp.json();
 
             if (resp.ok && !data.reauth_required) {
-                showAlert(`Nivel de confianza validado: ${data.detail} (IP: ${data.current_ip})`, "success", 5000);
-                setTrustStatus("verified", "CONFIANZA VERIFICADA (100%)", data.detail);
-            } else {
-                showAlert(`Riesgo Detectado: ${data.detail || "Reautenticación requerida"}`, "warning", 6000);
+                showAlert(`Nivel de confianza validado: ${data.detail || data.message} (IP: ${data.current_ip})`, "success", 5000);
+                setTrustStatus("verified", "CONFIANZA VERIFICADA (100%)", data.detail || data.message);
             }
         } catch (e) {
             showAlert(`Error al evaluar riesgo: ${e.message}`, "danger");
@@ -710,12 +811,19 @@
     /**
      * Threat Simulator Controls: Inject or Reset Spoofed IP.
      */
-    elements.btnToggleSimIp.onclick = () => {
+    elements.btnToggleSimIp.onclick = async () => {
         const spoofed = elements.simSpoofedIp.value.trim() || "189.203.45.12";
         state.activeSimulatedIp = spoofed;
         updateIpDisplay();
         setTrustStatus("warning", "ALERTA: DISCREPANCIA DE IP", `IP simulada vía X-Forwarded-For: ${spoofed}`);
-        showAlert(`IP externa inyectada (${spoofed}). La próxima petición detonará CP-S07 (ip_change).`, "warning", 8000);
+        showAlert(`IP externa inyectada (${spoofed}). Evaluando riesgo continuo Zero Trust...`, "warning", 6000);
+
+        // Immediately evaluate session risk with spoofed IP so the modal appears in that instant
+        try {
+            await apiFetch("/api/reauth/evaluate");
+        } catch (e) {
+            console.warn("Evaluate risk triggered:", e);
+        }
     };
 
     elements.btnResetSimIp.onclick = () => {
@@ -724,6 +832,19 @@
         setTrustStatus("verified", "CONFIANZA VERIFICADA (100%)", "IP local restaurada (127.0.0.1)");
         showAlert("Header X-Forwarded-For eliminado. Conexión restaurada a IP local.", "info", 5000);
     };
+
+    /**
+     * Direct test button: Force reauth modal directly (Demo flow).
+     */
+    if (elements.btnForceReauthDemo) {
+        elements.btnForceReauthDemo.onclick = () => {
+            openReauthModal({
+                reauth_required: true,
+                risk_event: "sensitive_operation",
+                detail: "Demostración de Reautenticación Adaptativa (RF-04 / RF-05 / CP-S04 / CP-S08)."
+            });
+        };
+    }
 
     /**
      * Admin Dashboard Data Loading (Users + Audit Logs).
@@ -952,6 +1073,9 @@
             setTrustStatus("revoked", "CONEXIÓN DESCONECTADA", "Inicia el servidor back-end");
         }
     }
+
+    // Expose openReauthModal globally for programmatic/demo access
+    window.openReauthModal = openReauthModal;
 
     // Run initial startup check
     checkInitialSession();

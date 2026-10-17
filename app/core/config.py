@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     # Zero Trust Continuous Reauthentication & Risk Engine
     REAUTH_TIMEOUT_MINUTES: int = 10
     CHALLENGE_NONCE_TTL_SECONDS: int = 300
-    REAUTH_TARGET_PHRASE: str = "tie5Roanl"
+    REAUTH_TARGET_PHRASE: str = ".tie5Roanl"
 
     # Rate Limiting (RNF-03)
     RATE_LIMIT_ENABLED: bool = True

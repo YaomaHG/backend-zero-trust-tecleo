@@ -185,13 +185,49 @@ class BiometricService:
                 "threshold": round(threshold, 4),
             }
 
-        # If 31 dimensions and model is loaded, evaluate hybrid score (GB + Statistical)
+        # If 31 dimensions and model is loaded, evaluate hybrid score with human tempo tolerance
         if len(sample) == 31 and self.model is not None:
-            diff = np.abs(np.array(sample) - np.array(template)).reshape(1, -1)
-            gb_prob = float(self.model.predict_proba(diff)[0, 1])
-            stat_prob = calculate_statistical_similarity(template, sample)
-            # Hybrid weighted score: 70% ML Classifier, 30% Statistical normalized distance
-            score = 0.70 * gb_prob + 0.30 * stat_prob
+            sample_arr = np.array(sample, dtype=float)
+            template_arr = np.array(template, dtype=float)
+
+            # Calculate typing speed ratio and rhythm profile correlation
+            mean_t = float(np.mean(template_arr))
+            mean_s = float(np.mean(sample_arr))
+            speed_ratio = mean_s / (mean_t + 1e-6)
+
+            std_s = float(np.std(sample_arr))
+            std_t = float(np.std(template_arr))
+            if std_s > 1e-6 and std_t > 1e-6:
+                corr = float(np.corrcoef(template_arr, sample_arr)[0, 1])
+            else:
+                corr = 0.0
+
+            # Natural human typing speed variation in live browser (0.70x to 1.38x)
+            if 0.70 <= speed_ratio <= 1.38:
+                tempo_scale = mean_t / mean_s
+                aligned_sample = list(sample_arr * tempo_scale)
+            else:
+                aligned_sample = sample
+
+            diff_raw = np.abs(sample_arr - template_arr).reshape(1, -1)
+            diff_aligned = np.abs(np.array(aligned_sample) - template_arr).reshape(1, -1)
+
+            gb_raw = float(self.model.predict_proba(diff_raw)[0, 1])
+            gb_aligned = float(self.model.predict_proba(diff_aligned)[0, 1])
+
+            stat_raw = calculate_statistical_similarity(template, sample)
+            stat_aligned = calculate_statistical_similarity(template, aligned_sample)
+
+            if 0.70 <= speed_ratio <= 1.38 and corr > 0.50:
+                gb_score = max(gb_raw, gb_aligned * 0.90)
+                stat_score = max(stat_raw, stat_aligned * 0.90)
+                score = 0.50 * gb_score + 0.35 * stat_score + 0.15 * max(0.0, corr)
+            else:
+                # Impostor or extreme speed divergence (e.g. >= 2.0x, <= 0.50x, or erratic/flat rhythm)
+                penalty = 1.0
+                if speed_ratio >= 1.90 or speed_ratio <= 0.50:
+                    penalty = 0.50
+                score = (0.70 * gb_raw + 0.30 * stat_raw) * penalty
         else:
             # General phrase length or fallback: statistical normalized similarity
             score = calculate_statistical_similarity(template, sample)

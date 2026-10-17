@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zero Trust Keystroke Shield | Reautenticación Adaptativa Biométrica</title>
+    <meta name="description" content="Plataforma de seguridad Zero Trust con reautenticación adaptativa continua basada en dinámica de tecleo y cifrado AES-256-GCM.">
+    <link rel="stylesheet" href="/static/css/styles.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🛡️</text></svg>">
+</head>
+<body>
+
+    <!-- Header & Navigation Bar -->
+    <header class="app-header">
+        <div class="brand-wrapper">
+            <div class="brand-logo-shield">
+                <svg viewBox="0 0 24 24">
+                    <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/>
+                </svg>
+            </div>
+            <div>
+                <h1 class="brand-title">Zero Trust Keystroke Shield</h1>
+                <div class="brand-subtitle">Reautenticación Adaptativa Biométrica (Tesis 2026)</div>
+            </div>
+        </div>
+
+        <div class="header-actions">
+            <!-- Zero Trust Dynamic Trust Engine Badge -->
+            <div id="trust-indicator" class="trust-badge-pill">
+                <span class="pulsing-dot"></span>
+                <span id="trust-indicator-text">CONFIANZA NO VERIFICADA</span>
+            </div>
+
+            <!-- User Session Details & Logout -->
+            <div id="user-session-bar" class="user-meta-pill hidden">
+                <span id="header-username" class="mono" style="font-weight: 600;">usuario</span>
+                <span id="header-role-badge" class="role-tag">user</span>
+                <span id="header-biometric-badge" class="role-tag" style="background: rgba(16, 185, 129, 0.2); color: var(--emerald-green); border-color: rgba(16, 185, 129, 0.3);">Sin Perfil</span>
+                <button id="btn-logout" class="btn btn-danger btn-sm" title="Revocar sesión y borrar cookies">Cerrar Sesión</button>
+            </div>
+        </div>
+    </header>
+
+    <main class="app-container">
+
+        <!-- Global Alert Notifications -->
+        <div id="global-alert-container"></div>
+
+        <!-- ===============================================================
+             VIEW 1 & 2: AUTHENTICATION (Login / Registration)
+             =============================================================== -->
+        <section id="view-auth" class="view-card" style="max-width: 540px; margin: 3rem auto;">
+            <div class="tabs-nav" style="justify-content: center;">
+                <button id="tab-login-btn" class="tab-btn active">Iniciar Sesión (RF-02)</button>
+                <button id="tab-register-btn" class="tab-btn">Registrarse (RF-01)</button>
+            </div>
+
+            <!-- Login Form -->
+            <form id="form-login">
+                <div class="form-group">
+                    <label class="form-label" for="login-username">Nombre de Usuario</label>
+                    <input type="text" id="login-username" class="form-input" placeholder="Ej: admin o usuario1" required autocomplete="username">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="login-password">Contraseña</label>
+                    <input type="password" id="login-password" class="form-input" placeholder="••••••••••••" required autocomplete="current-password">
+                </div>
+                
+                <div style="display: flex; gap: 0.5rem; margin-bottom: 1.25rem;">
+                    <button type="button" id="btn-fill-admin" class="btn btn-secondary btn-sm" style="flex: 1;">⚡ Admin Demo</button>
+                    <button type="button" id="btn-fill-user" class="btn btn-secondary btn-sm" style="flex: 1;">👤 User Demo</button>
+                </div>
+
+                <button type="submit" id="btn-submit-login" class="btn btn-primary btn-block">
+                    Autenticarse y Generar Sesión JWT
+                </button>
+            </form>
+
+            <!-- Register Form -->
+            <form id="form-register" class="hidden">
+                <div class="form-group">
+                    <label class="form-label" for="reg-username">Nombre de Usuario</label>
+                    <input type="text" id="reg-username" class="form-input" placeholder="Nombre único de usuario" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="reg-email">Correo Electrónico</label>
+                    <input type="email" id="reg-email" class="form-input" placeholder="usuario@empresa.com" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="reg-password">Contraseña (Mínimo 8 caracteres)</label>
+                    <input type="password" id="reg-password" class="form-input" placeholder="••••••••••••" required minlength="8">
+                </div>
+                <button type="submit" id="btn-submit-register" class="btn btn-primary btn-block">
+                    Registrar Nueva Cuenta
+                </button>
+            </form>
+        </section>
+
+        <!-- ===============================================================
+             AUTHENTICATED WORKSPACE (Views 3, 4, 5, 7)
+             =============================================================== -->
+        <div id="authenticated-workspace" class="hidden">
+
+            <!-- Subsystem Navigation Tabs -->
+            <nav class="tabs-nav">
+                <button id="nav-biometrics-btn" class="tab-btn active">
+                    <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-2.266.99-4.659.99-7.132A8 8 0 004 11a8.04 8.04 0 001.077 4.025"/></svg>
+                    Enrolamiento y Dinámica de Tecleo (RF-03, RNF-08)
+                </button>
+                <button id="nav-operations-btn" class="tab-btn">
+                    <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+                    Operaciones Sensibles & Simulador Zero Trust (RF-04, CP-S07)
+                </button>
+                <button id="nav-admin-btn" class="tab-btn hidden">
+                    <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                    Panel de Administración & Auditoría (RBAC)
+                </button>
+            </nav>
+
+            <!-- Overview Metrics Grid -->
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-label">Estado de Confianza</div>
+                    <div id="stat-trust-level" class="metric-value" style="color: var(--emerald-green);">100%</div>
+                    <div id="stat-trust-desc" class="metric-sub">Verificado continuamente</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Dirección IP Activa</div>
+                    <div id="stat-current-ip" class="metric-value mono" style="font-size: 1.15rem;">127.0.0.1</div>
+                    <div id="stat-ip-status" class="metric-sub">Coincide con IP de sesión</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Perfil Biométrico</div>
+                    <div id="stat-biometric-status" class="metric-value" style="font-size: 1.15rem; color: var(--cyan-neon);">Cifrado AES-256</div>
+                    <div id="stat-biometric-dims" class="metric-sub">Plantilla de 31 características</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Umbral Óptimo (Threshold)</div>
+                    <div id="stat-model-threshold" class="metric-value mono">θ* = 0.4024</div>
+                    <div class="metric-sub">EER = 15.45% | AUC = 0.9255</div>
+                </div>
+            </div>
+
+            <!-- ===============================================================
+                 VIEW 4: BIOMETRIC ENROLLMENT & TESTING (RF-03, RF-05, RNF-08)
+                 =============================================================== -->
+            <section id="section-biometrics" class="view-card">
+                <div class="section-header">
+                    <h2 class="section-title">
+                        <span class="section-icon">⌨️</span>
+                        Enrolamiento Biométrico de Dinámica de Tecleo
+                    </h2>
+                    <span class="role-tag">Sección 3.6.3 | RNF-08</span>
+                </div>
+
+                <p style="color: var(--text-secondary); margin-bottom: 1.25rem;">
+                    Bajo el principio de <strong>Minimización de Datos (RNF-08)</strong>, el sistema captura únicamente los micro-tiempos de presión (<span class="mono">H</span>), latencias Down-Down (<span class="mono">DD</span>) y vuelos Up-Down (<span class="mono">UD</span>). Ningún texto, tecla o carácter alfanumérico es enviado al servidor.
+                </p>
+
+                <!-- Target Reference Phrase -->
+                <div class="typing-target-phrase">
+                    <div>
+                        <div style="font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase;">Frase Objetivo de Calibración:</div>
+                        <div class="phrase-badge" id="display-target-phrase">.tie5Roanl</div>
+                    </div>
+                    <div style="text-align: right;">
+                        <span style="font-size: 0.78rem; color: var(--text-secondary);">Presiona <kbd style="background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px;">Enter</kbd> al terminar cada repetición</span>
+                    </div>
+                </div>
+
+                <!-- Guided Enrollment Progress -->
+                <div class="progress-container">
+                    <div class="progress-header">
+                        <span id="enrollment-step-label">Progreso de Enrolamiento: Muestra 0 de 3</span>
+                        <span id="enrollment-percent-label" class="mono">0%</span>
+                    </div>
+                    <div class="progress-bar-track">
+                        <div id="enrollment-progress-bar" class="progress-bar-fill"></div>
+                    </div>
+
+                    <div class="samples-badge-row">
+                        <div id="chip-sample-1" class="sample-step-chip active">Muestra 1 / 3</div>
+                        <div id="chip-sample-2" class="sample-step-chip">Muestra 2 / 3</div>
+                        <div id="chip-sample-3" class="sample-step-chip">Muestra 3 / 3</div>
+                    </div>
+                </div>
+
+                <!-- Keystroke Typing Box -->
+                <div class="form-group" style="margin-top: 1.5rem;">
+                    <label class="form-label" for="enrollment-keystroke-input">
+                        Escribe la frase aquí para registrar las 3 muestras guiadas:
+                    </label>
+                    <input type="text" id="enrollment-keystroke-input" class="form-input keystroke-input-field mono" placeholder="Escribe .tie5Roanl y presiona Enter..." autocomplete="off" autocapitalize="off" spellcheck="false">
+                </div>
+
+                <!-- Realtime Extracted Feature Vector Telemetry (RNF-08 Proof) -->
+                <div style="margin-top: 1rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span class="form-label" style="margin: 0;">Telemetría de Vector Temporal Extraído en el Cliente (RNF-08):</span>
+                        <span id="vector-dim-counter" class="mono" style="font-size: 0.75rem; color: var(--cyan-neon);">0 características</span>
+                    </div>
+                    <div id="enrollment-telemetry" class="telemetry-box">// Escribe en el campo superior para observar la extracción en tiempo real de Hold y Flight times...</div>
+                </div>
+
+                <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
+                    <button id="btn-save-enrollment" class="btn btn-primary" disabled>
+                        💾 Guardar Perfil Cifrado (AES-256-GCM)
+                    </button>
+                    <button id="btn-reset-enrollment" class="btn btn-secondary">
+                        🔄 Reiniciar Muestras
+                    </button>
+                    <button id="btn-verify-pattern" class="btn btn-secondary">
+                        🧪 Probar Verificación en 1 Paso (RF-05)
+                    </button>
+                </div>
+            </section>
+
+            <!-- ===============================================================
+                 VIEW 5: SENSITIVE OPERATIONS & ZERO TRUST SIMULATOR
+                 =============================================================== -->
+            <section id="section-operations" class="view-card hidden">
+                <div class="section-header">
+                    <h2 class="section-title">
+                        <span class="section-icon">💼</span>
+                        Operaciones Corporativas Sensibles (Sección 3.3)
+                    </h2>
+                    <span class="role-tag">RF-04 | CP-S07</span>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem;">
+                    <!-- Operation Form -->
+                    <div>
+                        <h3 style="font-size: 1.1rem; margin-bottom: 1rem; color: #FFFFFF;">Transferencia de Fondos Corporativos</h3>
+                        <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 1.25rem;">
+                            Bajo las políticas Zero Trust, esta operación crítica requiere verificación continua estricta. Si la IP ha cambiado o no hay una reautenticación biométrica reciente, el back-end denegará la acción (<span class="mono">403 Forbidden</span>) y activará el desafío biométrico adaptativo.
+                        </p>
+
+                        <form id="form-sensitive-action">
+                            <div class="form-group">
+                                <label class="form-label" for="op-account">Cuenta Destino</label>
+                                <input type="text" id="op-account" class="form-input mono" value="ES91-2100-0418-4502-0005-1337" required>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="op-amount">Monto ($ USD)</label>
+                                <input type="number" id="op-amount" class="form-input mono" value="75000.00" step="100" min="1" required>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="op-type">Tipo de Operación</label>
+                                <select id="op-type" class="form-select">
+                                    <option value="wire_transfer">Transferencia Interbancaria de Alto Monto</option>
+                                    <option value="root_key_rotation">Rotación de Llaves Criptográficas Maestras</option>
+                                    <option value="privilege_change">Modificación de Políticas de Acceso</option>
+                                </select>
+                            </div>
+                            <button type="submit" id="btn-execute-sensitive" class="btn btn-primary btn-block">
+                                🚀 Ejecutar Operación Sensible
+                            </button>
+                        </form>
+
+                        <div id="sensitive-op-result" style="margin-top: 1rem;"></div>
+                    </div>
+
+                    <!-- Thesis Demonstration & Threat Simulator -->
+                    <div class="view-card simulator-card">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                            <h3 style="font-size: 1.1rem; color: var(--cyan-neon);">🎮 Simulador de Contexto (Demo Tesis)</h3>
+                            <span class="event-badge warning">Evaluación de Jurado</span>
+                        </div>
+                        <p style="color: var(--text-secondary); font-size: 0.82rem; margin-bottom: 1rem;">
+                            Simula en vivo ante el jurado escenarios de ataque y cambios de contexto en tiempo de ejecución:
+                        </p>
+
+                        <div class="form-group">
+                            <label class="form-label" for="sim-spoofed-ip">Simular Header <span class="mono">X-Forwarded-For</span> (Cambio de IP):</label>
+                            <input type="text" id="sim-spoofed-ip" class="form-input mono" value="189.203.45.12" placeholder="Ej: 189.203.45.12 o 200.1.2.3">
+                        </div>
+
+                        <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+                            <button type="button" id="btn-toggle-sim-ip" class="btn btn-secondary btn-sm" style="flex: 1;">
+                                🌐 Inyectar IP Foránea
+                            </button>
+                            <button type="button" id="btn-reset-sim-ip" class="btn btn-secondary btn-sm" style="flex: 1;">
+                                ↩️ Restaurar IP Local
+                            </button>
+                        </div>
+
+                        <button type="button" id="btn-eval-risk" class="btn btn-secondary btn-block" style="margin-bottom: 1rem;">
+                            🔍 Evaluar Riesgo en Tiempo Real (GET /evaluate)
+                        </button>
+
+                        <div style="border-top: 1px solid var(--border-subtle); padding-top: 0.85rem; font-size: 0.78rem; color: var(--text-muted);">
+                            <strong>Casos de Prueba Demostrables:</strong><br>
+                            • <strong>CP-S07:</strong> Cambio repentino de IP detona <span class="mono">reauth_required: true</span>.<br>
+                            • <strong>RF-04:</strong> Operación sensible sin reautenticación previa se bloquea.<br>
+                            • <strong>CP-S04:</strong> Challenge nonce anti-replay expira en 300s y es de uso único.<br>
+                            • <strong>CP-S08:</strong> Tecleo anómalo o impostor revoca la sesión activa.
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ===============================================================
+                 VIEW 7: ADMIN CONTROL PANEL (RBAC & AUDIT LOGS)
+                 =============================================================== -->
+            <section id="section-admin" class="view-card hidden">
+                <div class="section-header">
+                    <h2 class="section-title">
+                        <span class="section-icon">🛡️</span>
+                        Panel de Administración & Bitácora de Auditoría (RBAC)
+                    </h2>
+                    <span class="role-tag admin">Solo Administradores</span>
+                </div>
+
+                <!-- Users RBAC Management -->
+                <div style="margin-bottom: 2rem;">
+                    <h3 style="font-size: 1.1rem; margin-bottom: 1rem; color: #FFFFFF;">Gestión de Usuarios y Roles (RF-06, RF-09)</h3>
+                    <div class="audit-table-wrapper">
+                        <table class="audit-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Usuario</th>
+                                    <th>Email</th>
+                                    <th>Roles Asignados</th>
+                                    <th>Estado</th>
+                                    <th>Acción</th>
+                                </tr>
+                            </thead>
+                            <tbody id="admin-users-tbody">
+                                <tr><td colspan="6" style="text-align: center;">Cargando usuarios...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Audit Log Viewer -->
+                <div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                        <h3 style="font-size: 1.1rem; color: #FFFFFF;">Bitácora Inmutable de Seguridad (audit_log - RF-07, RNF-05)</h3>
+                        <button id="btn-refresh-audit" class="btn btn-secondary btn-sm">🔄 Actualizar Bitácora</button>
+                    </div>
+
+                    <div class="audit-table-wrapper">
+                        <table class="audit-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Timestamp</th>
+                                    <th>Tipo de Evento</th>
+                                    <th>Usuario ID</th>
+                                    <th>Dirección IP</th>
+                                    <th>Detalles (JSON Cifrado/Auditoría)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="admin-audit-tbody">
+                                <tr><td colspan="6" style="text-align: center;">Cargando eventos de auditoría...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+        </div>
+
+    </main>
+
+    <!-- ===================================================================
+         VIEW 6: ADAPTIVE REAUTHENTICATION MODAL (ZERO TRUST CHALLENGE)
+         =================================================================== -->
+    <div id="modal-reauth" class="modal-backdrop">
+        <div class="modal-dialog">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <h3 style="font-size: 1.3rem; color: var(--amber-warning); display: flex; align-items: center; gap: 0.5rem;">
+                    <span>⚠️</span> Desafío de Reautenticación Adaptativa
+                </h3>
+                <span id="reauth-countdown" class="nonce-timer-chip">⏱️ 300s</span>
+            </div>
+
+            <!-- Risk Banner Trigger -->
+            <div class="modal-banner-warning">
+                <div>
+                    <div style="font-weight: 700;" id="reauth-risk-title">Riesgo de Contexto Detectado: ip_change</div>
+                    <div id="reauth-risk-detail" style="font-size: 0.82rem; margin-top: 0.2rem;">
+                        Se detectó una discrepancia en la dirección IP del cliente o se requiere autorización biométrica para continuar.
+                    </div>
+                </div>
+            </div>
+
+            <p style="color: var(--text-secondary); font-size: 0.86rem; margin-bottom: 1.25rem;">
+                Para validar que eres el usuario genuino y continuar operando bajo principios Zero Trust, escribe la frase de calibración a continuación:
+            </p>
+
+            <div class="typing-target-phrase" style="margin-bottom: 1rem;">
+                <div>
+                    <div style="font-size: 0.75rem; color: var(--text-muted);">Frase Requerida:</div>
+                    <div class="phrase-badge" id="reauth-target-phrase">.tie5Roanl</div>
+                </div>
+                <div style="text-align: right;">
+                    <div style="font-size: 0.72rem; color: var(--text-muted);">Nonce Anti-Replay (CP-S04):</div>
+                    <span id="reauth-nonce-badge" class="mono" style="font-size: 0.78rem; color: var(--cyan-neon);">cargando...</span>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="reauth-keystroke-input">
+                    Escribe la frase y presiona Enter para verificar:
+                </label>
+                <input type="text" id="reauth-keystroke-input" class="form-input keystroke-input-field mono" placeholder="Escribe .tie5Roanl y presiona Enter..." autocomplete="off" autocapitalize="off" spellcheck="false">
+            </div>
+
+            <div id="reauth-status-result" style="margin-bottom: 1.25rem;"></div>
+
+            <div style="display: flex; justify-content: flex-end; gap: 0.75rem;">
+                <button type="button" id="btn-cancel-reauth" class="btn btn-secondary">Cancelar</button>
+                <button type="button" id="btn-submit-reauth" class="btn btn-primary" disabled>Verificar Dinámica</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts: Keystroke High-Precision Timing Engine + SPA Controller -->
+    <script src="/static/js/keystroke.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

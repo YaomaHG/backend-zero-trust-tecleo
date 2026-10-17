@@ -22,13 +22,11 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_db():
-    """Create all tables in the test database once for the test session and seed roles."""
+    """Create all tables in the test database once for the test session and seed baseline entities."""
     Base.metadata.create_all(bind=test_engine)
     db = TestingSessionLocal()
-    admin_role = Role(name="admin", description="Admin role")
-    user_role = Role(name="user", description="User role")
-    db.add_all([admin_role, user_role])
-    db.commit()
+    from app.main import init_db
+    init_db(db)
     db.close()
     yield
     Base.metadata.drop_all(bind=test_engine)

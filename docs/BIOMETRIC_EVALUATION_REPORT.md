@@ -31,7 +31,7 @@ La evaluación biométrica se ejecutó sobre la estructura del Benchmark Interna
 | **Umbral Óptimo de Decisión** | $\theta^*$ (**Threshold**) | **0.4024** | Entre $0.30$ y $0.70$ | **Calibrado** |
 
 ---
-
+ 
 ## 3. Gráficas de Desempeño Biométrico
 
 La siguiente figura ilustra la Curva ROC y el Cruce de Tasas de Error (FAR vs FRR) para la determinación analítica del punto EER:

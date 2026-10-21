@@ -1,3 +1,14 @@
+"""
+Enrutador de Autorización Administrativa y Auditoría (app/authorization/router.py).
+Expone las operaciones protegidas por el esquema de control de acceso RBAC
+exclusivas para usuarios con el rol 'admin'.
+
+Requerimientos y Casos de Prueba asociados:
+- RF-06 / RF-09: Gestión y asignación de roles a usuarios.
+- RF-07 / RNF-05: Consulta y visualización de la bitácora inmutable de auditoría.
+- CP-S05: Protección de endpoints mediante la dependencia 'require_role("admin")'.
+"""
+
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
@@ -21,7 +32,10 @@ router = APIRouter()
 def list_users(
     db: Session = Depends(get_db),
 ) -> List[UserResponse]:
-    """Retrieves all users and their assigned roles for administrators."""
+    """
+    Lista todos los usuarios registrados y sus roles asociados (RF-09).
+    Restringido exclusivamente a administradores mediante `require_role("admin")`.
+    """
     users = db.query(User).order_by(User.id.asc()).all()
     return [UserResponse.model_validate(u) for u in users]
 
@@ -39,7 +53,17 @@ def assign_role_to_user(
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_role("admin")),
 ) -> UserResponse:
-    """Assigns an authorization role to a target user and logs an audit record."""
+    """
+    Asigna un nuevo rol de seguridad RBAC a un usuario objetivo (RF-06, RF-09).
+
+    Flujo:
+    1. Valida que el usuario que ejecuta la acción tenga el rol 'admin' (CP-S05).
+    2. Valida la existencia del usuario objetivo en la base de datos.
+    3. Valida la existencia del rol solicitado en el catálogo de roles.
+    4. Vincula el rol en la tabla asociativa `user_roles`.
+    5. Emite un evento inmutable de auditoría ('role_assigned') con los datos del administrador
+       y el rol otorgado para estricta trazabilidad de privilegios.
+    """
     client_ip = get_client_ip(request)
 
     target_user = db.query(User).filter(User.id == user_id).first()
@@ -61,6 +85,7 @@ def assign_role_to_user(
         db.commit()
         db.refresh(target_user)
 
+    # RNF-05: Auditoría inmutable de elevación de privilegios
     log_audit_event(
         db=db,
         event_type="role_assigned",
@@ -88,7 +113,11 @@ def list_audit_logs(
     offset: int = 0,
     db: Session = Depends(get_db),
 ) -> List[AuditLogResponse]:
-    """Retrieves immutable security audit trail events."""
+    """
+    Consulta la bitácora inmutable de auditoría forense (RF-07, RNF-05).
+    Exclusivo para administradores. Retorna eventos ordenados cronológicamente
+    de forma descendente con soporte de paginación ('limit' y 'offset').
+    """
     logs = (
         db.query(AuditLog)
         .order_by(AuditLog.timestamp.desc())
@@ -97,3 +126,4 @@ def list_audit_logs(
         .all()
     )
     return [AuditLogResponse.model_validate(log) for log in logs]
+

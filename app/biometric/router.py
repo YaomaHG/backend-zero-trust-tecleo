@@ -1,6 +1,13 @@
 """
-Biometric Dynamics API Endpoints
-(RF-03, RF-05, RNF-01, RNF-08, CP-S08)
+Enrutador de Endpoints de Biometría de Dinámica de Tecleo (app/biometric/router.py).
+Expone las operaciones de enrolamiento de perfiles, consulta de estado y
+verificación biométrica activa bajo el modelo Zero Trust.
+
+Requerimientos y Casos de Prueba asociados:
+- RF-03 / RNF-01: Enrolamiento de plantilla de tecleo cifrada en reposo (AES-256-GCM).
+- RF-05 / CP-S08: Verificación biométrica con scoring híbrido frente a umbral óptimo.
+- RNF-08: Minimización de datos (sin almacenar texto ni caracteres).
+- RNF-05: Auditoría inmutable de eventos 'biometric_enrolled' y 'biometric_verify_success/failed'.
 """
 
 import logging
@@ -38,9 +45,13 @@ def enroll_keystroke_profile(
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """
-    Enrolls or updates the biometric keystroke profile for the authenticated user (RF-03).
-    Templates are encrypted at rest with AES-256-GCM (RNF-01).
-    Logs 'biometric_enrolled' in audit_log.
+    Enrola o actualiza el perfil biométrico de tecleo del usuario autenticado (RF-03).
+
+    Flujo:
+    1. Recibe 3 a 5 muestras de la frase '.tie5Roanl' o eventos de tiempo puros (RNF-08).
+    2. Calcula la media de referencia y la cifra con AES-256-GCM (RNF-01).
+    3. Persiste el criptograma en la columna `vector_encrypted` (BYTEA) de PostgreSQL.
+    4. Registra en `audit_log` el evento inmutable `biometric_enrolled` con la longitud del vector.
     """
     ip = get_client_ip(request)
     profile = biometric_service.enroll_keystroke_profile(
@@ -51,10 +62,11 @@ def enroll_keystroke_profile(
         raw_events=payload.raw_events,
     )
 
-    # Determine vector length for metadata audit
+    # Determinar longitud del vector descifrado para auditoría técnica
     decrypted = decrypt_vector(profile.vector_encrypted)
     vector_len = len(decrypted)
 
+    # RNF-05: Registro inmutable en auditoría
     log_audit_event(
         db=db,
         event_type="biometric_enrolled",
@@ -85,7 +97,8 @@ def get_biometric_status(
     db: Session = Depends(get_db),
 ) -> KeystrokeStatusResponse:
     """
-    Returns whether the current user has an enrolled keystroke profile.
+    Consulta si el usuario autenticado tiene enrolado un perfil biométrico activo.
+    Permite al front-end decidir si mostrar el asistente de enrolamiento inicial.
     """
     profile = (
         db.query(KeystrokeProfile)
@@ -114,8 +127,14 @@ def verify_keystroke_pattern(
     db: Session = Depends(get_db),
 ) -> KeystrokeVerifyResponse:
     """
-    Verifies a keystroke dynamics timing sample against the user's enrolled profile (RF-05).
-    Logs 'biometric_verify_success' or 'biometric_verify_failed' in audit_log.
+    Verifica una muestra candidata de tecleo contra la plantilla del usuario (RF-05, CP-S08).
+
+    Flujo:
+    1. Procesa el vector recibido (o extrae características a partir de raw_events).
+    2. Ejecuta la inferencia híbrida (Gradient Boosting + Similitud Estadística) en BiometricService.
+    3. Compara el score resultante contra el umbral de seguridad (0.4024).
+    4. Registra `biometric_verify_success` o `biometric_verify_failed` en la bitácora inmutable.
+    5. Retorna si hubo coincidencia (`match`), el `score` obtenido y el `threshold` aplicado.
     """
     ip = get_client_ip(request)
     result = biometric_service.verify_keystroke_pattern(
@@ -154,3 +173,4 @@ def verify_keystroke_pattern(
         threshold=threshold,
         message=message,
     )
+

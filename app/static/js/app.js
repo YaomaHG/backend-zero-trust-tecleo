@@ -131,19 +131,38 @@
     }
 
     /**
-     * Unified HTTP client with automatic Cookie credentials, token handling,
-     * demo IP spoofing (X-Forwarded-For) and automatic 403 Zero Trust challenge interception.
+     * Interceptor Central de Peticiones HTTP (app/static/js/app.js).
+     * 
+     * ¿Cómo funciona el Interceptor 'apiFetch' y la Detección de Desafíos Zero Trust?
+     * -------------------------------------------------------------------------------
+     * 1. Envío Transparente de Credenciales:
+     *    Configura `credentials = 'include'`, garantizando que la cookie HttpOnly
+     *    'access_token' viaje en todas las cabeceras HTTP de forma nativa y protegida.
+     * 2. Simulación de Cambio de Red (Demostración de Tesis para el Asesor):
+     *    Si el usuario activa la simulación de IP, inyecta la cabecera 'X-Forwarded-For'
+     *    para provocar intencionalmente la anomalía 'ip_change' (Caso CP-S07).
+     * 3. Intercepción Reactiva de Errores 403 Forbidden y 428 Precondition Required:
+     *    Cuando el backend Zero Trust detecta un cambio de IP, vencimiento de confianza
+     *    o una operación sensible, responde con status 403 o 428 y el JSON:
+     *    `{ "reauth_required": true, "risk_event": "ip_change" | "sensitive_operation" }`.
+     * 4. Clonación del Stream y Despliegue Automático del Modal:
+     *    `apiFetch` clona la respuesta con `response.clone()` para no consumir el stream principal,
+     *    parsea el JSON y, al identificar `reauth_required: true`, invoca automáticamente
+     *    `openReauthModal(reauthData)`.
+     * 5. Experiencia de Usuario sin Fricción:
+     *    El modal se abre inmediatamente en primer plano (z-index 9999), solicita el
+     *    nonce al servidor (CP-S04) y activa la captura de dinámica de tecleo de '.tie5Roanl'.
      */
     async function apiFetch(url, options = {}) {
         options.headers = options.headers || {};
-        options.credentials = "include"; // Send HttpOnly cookie automatically
+        options.credentials = "include"; // Envía automáticamente la cookie segura HttpOnly
 
-        // If in demo spoofing mode, inject X-Forwarded-For
+        // Inyección de IP simulada para demostración interactiva en la tesis (X-Forwarded-For)
         if (state.activeSimulatedIp) {
             options.headers["X-Forwarded-For"] = state.activeSimulatedIp;
         }
 
-        // Add Bearer token header if available in state
+        // Respaldo de cabecera Bearer si existe en el estado global
         if (state.authToken && !options.headers["Authorization"]) {
             options.headers["Authorization"] = `Bearer ${state.authToken}`;
         }
@@ -156,18 +175,24 @@
         try {
             const response = await fetch(url, options);
 
-            // Handle Zero Trust Continuous Challenge interception (403 Forbidden or 428 Precondition Required)
+            // =========================================================================
+            // INTERCEPCIÓN ZERO TRUST: DETECCIÓN DE 403 FORBIDDEN / 428 PRECONDITION REQUIRED
+            // Disparado por cambio de IP (CP-S07) u operaciones corporativas sensibles (RF-04)
+            // =========================================================================
             if (response.status === 403 || response.status === 428) {
+                // Clonar la respuesta para poder inspeccionar el JSON sin bloquear el body stream
                 const clone = response.clone();
                 try {
                     const data = await clone.json();
                     const reauthData = data?.reauth_required ? data : data?.detail;
+                    // Si el backend solicita explícitamente reautenticación adaptativa
                     if (reauthData && reauthData.reauth_required) {
+                        // Abrir automáticamente el modal de reautenticación biométrica
                         openReauthModal(reauthData);
                         return response;
                     }
                 } catch (_) {
-                    // Not a JSON body, pass response as is
+                    // Si el cuerpo no era JSON, permitir el flujo regular
                 }
             }
 

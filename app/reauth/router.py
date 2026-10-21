@@ -1,6 +1,14 @@
 """
-FastAPI Router for Zero Trust Adaptive Reauthentication and Sensitive Corporate Operations
-(RF-04, RF-05, RF-08, CP-S04, CP-S07, CP-S08).
+Enrutador de Reautenticación Adaptativa Zero Trust y Operaciones Sensibles (app/reauth/router.py).
+Expone los endpoints que materializan la verificación continua de contexto y la
+autorización escalonada (Step-Up Authentication) ante anomalías o transacciones críticas.
+
+Requerimientos y Casos de Prueba asociados:
+- RF-04 / CP-S07: Detección y respuesta ante cambio de dirección IP ('ip_change').
+- CP-S04: Emisión de desafíos con Nonces de un solo uso (/challenge).
+- RF-05 / CP-S08: Verificación biomecánica adaptativa y actualización de confianza (/verify).
+- Sección 3.3 / RF-04: Protección de operaciones corporativas sensibles (/sensitive-action).
+- RF-08: Revocación de sesiones en caso de fallo reiterado o cadencias fraudulentas.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -40,14 +48,20 @@ def require_zero_trust_verification(
     current_user: User = Depends(get_current_user),
 ) -> UserSession:
     """
-    Zero Trust continuous verification dependency (RF-04, CP-S07).
-    Validates current session context and raises 403 if reauthentication is required.
+    Dependencia de FastAPI para imponer verificación continua Zero Trust (RF-04, CP-S07).
+
+    Intercepta la petición y valida el contexto de red del cliente:
+    - Si la IP actual difiere de la IP de login, o si la ventana de 10 minutos expiró:
+      Registra 'risk_detected' en la bitácora inmutable y rechaza con HTTP 403 Forbidden
+      con el cuerpo `{"reauth_required": True, "risk_event": "ip_change"}`.
+    - Si la confianza es plena, permite el paso hacia el endpoint.
     """
     session: UserSession = request.state.session
     client_ip = get_client_ip(request)
     risk_info = evaluate_session_risk(session, client_ip)
 
     if risk_info["reauth_required"]:
+        # RNF-05: Auditoría inmutable de detección de anomalía contextual
         log_audit_event(
             db=db,
             event_type="risk_detected",
@@ -79,8 +93,12 @@ def evaluate_risk(
     current_user: User = Depends(get_current_user),
 ) -> Any:
     """
-    Continuously evaluates session context (IP change, inactivity timeout).
-    If risk is detected (e.g. CP-S07 IP change), responds with 403 Forbidden and logs audit.
+    Evalúa continuamente el riesgo contextual de la sesión activa (Caso CP-S07).
+
+    Permite al front-end consultar si la sesión sigue siendo de confianza:
+    - Si se detecta un cambio de IP (CP-S07), responde HTTP 403 con `reauth_required: True`,
+      detalles del evento `ip_change` y registra la alerta en `audit_log`.
+    - Si la sesión es confiable, responde HTTP 200 con `reauth_required: False`.
     """
     session: UserSession = request.state.session
     client_ip = get_client_ip(request)
@@ -132,7 +150,15 @@ def generate_challenge(
     current_user: User = Depends(get_current_user),
     _rate_limit: None = Depends(check_reauth_rate_limit),
 ) -> ReauthChallengeResponse:
-    """Generates an anti-replay challenge nonce for keystroke sample submission."""
+    """
+    Genera un desafío criptográfico de un solo uso (Nonce) para la reautenticación (CP-S04).
+
+    Propiedades:
+    - Protegido por limitador de tasa de 5 peticiones/minuto (RNF-03).
+    - Entrega al cliente el `challenge_nonce` (32 bytes), la frase objetivo obligatoria
+      ('.tie5Roanl') y el tiempo de vida en segundos (300 s / 5 minutos).
+    - Emite el evento inmutable `reauth_challenge_issued` en `audit_log`.
+    """
     session: UserSession = request.state.session
     client_ip = get_client_ip(request)
 
@@ -166,8 +192,14 @@ def verify_reauth(
     _rate_limit: None = Depends(check_reauth_rate_limit),
 ) -> ReauthVerifyResponse:
     """
-    Validates anti-replay criteria, verifies keystroke dynamics pattern against encrypted profile,
-    records results in reauth_events and audit_log, and updates or revokes the session.
+    Verifica la muestra de tecleo enviada en respuesta a un desafío Zero Trust (RF-05, CP-S08).
+
+    Validaciones y Resultados:
+    1. Comprueba y quema el Nonce de un solo uso (CP-S04).
+    2. Compara el vector de 31 características contra la plantilla cifrada del usuario.
+    3. Si el usuario es legítimo (Score >= 0.4024): Actualiza la sesión y retorna éxito (HTTP 200).
+    4. Si falla o es impostor: Aplica la regla de 3 reintentos o revoca la sesión de inmediato
+       si es un ataque burdo o acumula 3 fallos (HTTP 403 con `session_revoked: True`).
     """
     session: UserSession = request.state.session
     client_ip = get_client_ip(request)
@@ -202,15 +234,25 @@ def execute_sensitive_action(
     current_user: User = Depends(get_current_user),
 ) -> Any:
     """
-    Executes a sensitive corporate action (e.g. simulated fund transfer or critical setting change).
-    Zero Trust Requirements:
-    1. No unresolved IP change (CP-S07).
-    2. Must possess a recent successful biometric reauthentication for 'sensitive_operation'.
+    Simula una operación bancaria/corporativa sensible bajo directrices Zero Trust (Sección 3.3).
+
+    Condiciones Cero Confianza para Autorizar la Acción:
+    ----------------------------------------------------
+    1. Ausencia de anomalías de red (CP-S07):
+       Si la IP cambió y no ha sido verificada biométricamente, se deniega con HTTP 403
+       y se exige reautenticación por evento `ip_change`.
+    2. Elevación de Privilegios Biométrica Fresca (Step-Up Reauthentication):
+       Debe existir un registro exitoso en `reauth_events` con `risk_event = 'sensitive_operation'`
+       ejecutado en los últimos 5 minutos. Si no existe, se rechaza con HTTP 403 exigiendo
+       teclear la frase de referencia obligatoria `.tie5Roanl`.
+    3. Ejecución Autorizada:
+       Se ejecuta la acción solicitada (ej. transferencia de $95,000 MXN) y se registra
+       el evento inmutable `sensitive_operation_executed` en la bitácora de auditoría.
     """
     session: UserSession = request.state.session
     client_ip = get_client_ip(request)
 
-    # 1. Check for unverified IP address change (CP-S07)
+    # 1. Comprobar si hubo cambio de IP no verificado (Caso CP-S07)
     if session.ip_address != client_ip:
         log_audit_event(
             db=db,
@@ -237,7 +279,7 @@ def execute_sensitive_action(
             },
         )
 
-    # 2. Check for recent successful reauthentication for 'sensitive_operation' (within 5 minutes)
+    # 2. Comprobar reautenticación biométrica reciente por 'sensitive_operation' (últimos 5 minutos)
     five_minutes_ago = datetime.now(timezone.utc) - timedelta(minutes=5)
     recent_reauth = (
         db.query(ReauthEvent)
@@ -273,7 +315,7 @@ def execute_sensitive_action(
             },
         )
 
-    # 3. Authorized execution
+    # 3. Ejecución autorizada de la operación sensible
     log_audit_event(
         db=db,
         event_type="sensitive_operation_executed",
@@ -296,3 +338,4 @@ def execute_sensitive_action(
             "destination_account": action_in.destination_account,
         },
     )
+

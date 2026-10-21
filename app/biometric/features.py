@@ -1,15 +1,26 @@
 """
-Keystroke Dynamics Feature Extraction & Normalization
-Zero Trust Continuous Biometric Authentication (RF-03, RF-05, RNF-08)
+Módulo de Extracción y Normalización de Características Biomecánicas (app/biometric/features.py).
+Convierte eventos temporales de pulsación de teclado en vectores numéricos continuos.
 
-Strictly enforces RNF-08 (Data Minimization & Privacy):
-- No characters, letters, key codes, or text are ever processed or stored.
-- Only physical press durations (Hold times) and transition intervals (Flight times) are computed.
+Requerimientos y Casos de Prueba asociados:
+- RNF-08 (Minimización de Datos y Privacidad):
+  NUNCA se captura, procesa ni almacena el texto, caracteres o letras escritas.
+  Solo se extraen marcas de tiempo relativas (segundos) entre eventos físicos.
+- RF-03: Extracción de vectores biométricos y cálculo de plantillas promedio de enrolamiento.
+- RF-05 / CP-S08: Normalización de características para verificación y tolerancia biomecánica.
 """
 
 from typing import Any, Dict, List, Optional
 import math
 
+# =============================================================================
+# DEFINICIÓN DEL VECTOR DE 31 DIMENSIONES (BENCHMARK INTERNACIONAL CMU)
+# Para la frase fija obligatoria ".tie5Roanl" (10 caracteres + tecla Enter = 11 teclas):
+# - 11 Tiempos de Retención (Hold time 'H'): H.period, H.t, H.i, ..., H.Return
+# - 10 Tiempos de Vuelo Tecla a Tecla (Down-Down 'DD'): DD.period.t, DD.t.i, ..., DD.l.Return
+# - 10 Tiempos de Transición (Up-Down 'UD'): UD.period.t, UD.t.i, ..., UD.l.Return
+# Total exacto: 11 + 10 + 10 = 31 dimensiones flotantes.
+# =============================================================================
 FEATURE_COLUMNS: List[str] = [
     "H.period", "DD.period.t", "UD.period.t",
     "H.t", "DD.t.i", "UD.t.i",
@@ -27,13 +38,32 @@ FEATURE_COLUMNS: List[str] = [
 
 def extract_features_from_events(raw_events: List[Dict[str, float]]) -> List[float]:
     """
-    Extracts hold and flight timing features from raw keypress events without capturing characters.
+    Extrae los tiempos biométricos a partir de marcas temporales de pulsación (down) y liberación (up).
+
+    Fórmulas Biomecánicas Implementadas de forma muy sencilla:
+    ---------------------------------------------------------
+    1. Tiempo de Retención / Presión (Hold Time - H):
+       Mide cuánto tiempo permanece aplastada físicamente una tecla.
+       Fórmula: H_i = t_release(i) - t_press(i)
+
+    2. Tiempo de Vuelo Tecla a Tecla (Down-Down - DD):
+       Intervalo entre el momento en que se presiona una tecla y se presiona la siguiente.
+       Fórmula: DD_i = t_press(i+1) - t_press(i)
+
+    3. Tiempo de Transición / Despegue (Up-Down - UD):
+       Tiempo transcurrido desde que se suelta una tecla hasta que se presiona la siguiente.
+       Fórmula: UD_i = t_press(i+1) - t_release(i)
+       (Nota: Puede ser negativo si el usuario escribe muy rápido con solapamiento de dedos).
+
+    Minimización de Datos (RNF-08):
+    El diccionario de entrada sólo contiene claves numéricas temporales {'down', 'up'}.
+    No existen variables ni metadatos con el valor textual de las teclas.
 
     Args:
-        raw_events: List of dicts containing only 'down' and 'up' (or 'press_time' and 'release_time') timestamps.
+        raw_events: Lista de diccionarios con marcas 'down' y 'up' (en ms o segundos).
 
     Returns:
-        List[float]: Normalized timing vector in seconds [H0, DD01, UD01, H1, DD12, UD12, ...].
+        List[float]: Vector numérico normalizado en segundos [H0, DD01, UD01, H1, DD12, ...].
     """
     if not raw_events or len(raw_events) < 2:
         raise ValueError("At least 2 key events are required to extract keystroke dynamics.")
@@ -49,23 +79,23 @@ def extract_features_from_events(raw_events: List[Dict[str, float]]) -> List[flo
         press_times.append(float(down))
         release_times.append(float(up))
 
-    # Detect if timestamps are in milliseconds (e.g. performance.now()) and convert to seconds
+    # Detectar si vienen en milisegundos (ej. performance.now() > 10.0) y convertir a segundos
     scale = 0.001 if any(t > 10.0 for t in (press_times + release_times)) else 1.0
 
     features: List[float] = []
     n = len(raw_events)
 
     for i in range(n):
-        # Hold time H_i = release_i - press_i
+        # Fórmula Hold (H): liberación - presión
         hold_time = max(0.01, (release_times[i] - press_times[i]) * scale)
         features.append(round(hold_time, 6))
 
         if i < n - 1:
-            # Flight time Down-Down: press_{i+1} - press_i
+            # Fórmula Down-Down (DD): presión siguiente - presión actual
             dd_time = max(0.01, (press_times[i + 1] - press_times[i]) * scale)
             features.append(round(dd_time, 6))
 
-            # Flight time Up-Down: press_{i+1} - release_i
+            # Fórmula Up-Down (UD): presión siguiente - liberación actual
             ud_time = (press_times[i + 1] - release_times[i]) * scale
             features.append(round(ud_time, 6))
 
@@ -74,13 +104,14 @@ def extract_features_from_events(raw_events: List[Dict[str, float]]) -> List[flo
 
 def validate_and_normalize_vector(vector: List[float]) -> List[float]:
     """
-    Validates a raw float vector, ensuring non-null, numeric values with reasonable bounds.
+    Valida y sanitiza un vector numérico asegurando que todos los valores sean flotantes
+    reales finitos (sin NaN ni Inf) y normalizados en la unidad estándar de segundos.
     """
     if not isinstance(vector, list) or len(vector) == 0:
         raise ValueError("Feature vector must be a non-empty list of numbers.")
 
     cleaned: List[float] = []
-    # If values are in milliseconds (e.g. > 10.0), convert to seconds
+    # Si los valores están en milisegundos (> 10.0), convertir a segundos
     scale = 0.001 if any(float(x) > 10.0 for x in vector) else 1.0
 
     for x in vector:
@@ -94,13 +125,17 @@ def validate_and_normalize_vector(vector: List[float]) -> List[float]:
 
 def compute_template_from_samples(samples: List[List[float]]) -> List[float]:
     """
-    Computes a baseline reference template vector by averaging 3 to 5 enrollment samples.
+    Calcula la plantilla biométrica de referencia promedio del usuario durante el enrolamiento (RF-03).
+
+    Se solicitan entre 3 y 5 repeticiones de la frase para capturar la varianza natural del usuario.
+    Se calcula la media aritmética componente a componente:
+    T_j = (1 / K) * sum_{k=1}^K S_{k, j}
 
     Args:
-        samples: List of feature vectors from multiple repetitions.
+        samples: Lista de vectores de características de las distintas repeticiones.
 
     Returns:
-        List[float]: The mean reference vector.
+        List[float]: Vector plantilla promedio de referencia.
     """
     if not samples or not isinstance(samples, list):
         raise ValueError("Samples must be a non-empty list of feature vectors.")
@@ -125,8 +160,10 @@ def compute_template_from_samples(samples: List[List[float]]) -> List[float]:
 
 def calculate_statistical_distance(template: List[float], sample: List[float]) -> float:
     """
-    Calculates normalized Manhattan distance between candidate sample and enrolled template.
-    Normalized by template magnitude + epsilon to handle relative variation.
+    Calcula la Distancia Manhattan Relativa Normalizada entre una muestra y la plantilla.
+
+    d = (1 / D) * sum_{i=1}^D ( |sample_i - template_i| / (|template_i| + 0.08) )
+    El término 0.08 actúa como factor de suavizado numérico contra divisiones por cero.
     """
     if len(template) != len(sample):
         raise ValueError(
@@ -145,9 +182,13 @@ def calculate_statistical_distance(template: List[float], sample: List[float]) -
 
 def calculate_statistical_similarity(template: List[float], sample: List[float]) -> float:
     """
-    Maps statistical distance to an exponential similarity score in [0.0, 1.0].
-    High similarity (near 1.0) indicates genuine user; low similarity indicates an impostor.
+    Mapea la distancia estadística a un índice de similitud acotado en el intervalo [0.0, 1.0].
+
+    Utiliza decaimiento exponencial: Sim = exp(-2.2 * distancia)
+    - Distancia cercana a 0.0 produce similitud cercana a 1.0 (patrón idéntico o muy afín).
+    - Distancias grandes producen similitud tendiente a 0.0 (impostor o tecleo errático).
     """
     dist = calculate_statistical_distance(template, sample)
     similarity = math.exp(-2.2 * dist)
     return max(0.0, min(1.0, float(similarity)))
+

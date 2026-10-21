@@ -1,6 +1,14 @@
 """
-Zero Trust Adaptive Reauthentication Engine (RF-04, RF-05, RF-08, CP-S04, CP-S07, CP-S08).
-Evaluates continuous risk, manages anti-replay nonces, and updates session trust states.
+Motor de Reautenticación Adaptativa Continua Zero Trust (app/reauth/service.py).
+Implementa la vigilancia contextual de riesgos, la protección contra ataques de
+repetición (Anti-Replay) y el escalonamiento de privilegios biométricos.
+
+Requerimientos y Casos de Prueba asociados:
+- RF-04 / CP-S07: Evaluación de riesgo continuo por cambio súbito de IP ('ip_change').
+- RF-04: Expiración de ventana de confianza biométrica ('session_timeout') y operaciones sensibles ('sensitive_operation').
+- CP-S04: Protección contra Ataques de Repetición (Nonces únicos y hashes SHA-256 de carga útil).
+- RF-05 / CP-S08: Verificación escalonada de dinámicas de tecleo y regla de 3 intentos.
+- RF-08: Revocación automática e inmediata de sesión en base de datos ante impostores ('session.revoked = True').
 """
 
 import hashlib
@@ -13,6 +21,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.audit.service import log_audit_event
@@ -25,8 +34,22 @@ logger = logging.getLogger("zero_trust_reauth")
 
 class AntiReplayStore:
     """
-    In-memory thread-safe store for single-use challenge nonces and sample hashes (CP-S04).
-    Prevents replay attacks by ensuring freshness and uniqueness of tokens and payloads.
+    Almacén en memoria seguro para hilos (Thread-safe) para mitigar Ataques de Repetición (CP-S04).
+
+    Triple Mecanismo de Defensa Anti-Replay:
+    ----------------------------------------
+    1. Desafíos Criptográficos de Un Solo Uso (Single-Use Challenge Nonces):
+       Generados con `secrets.token_urlsafe(32)`. Están atados exclusivamente al
+       `user_id` y `session_id`. En el instante en que se validan, su estado cambia
+       irreversiblemente a `consumed = True`. Si un atacante intercepta la petición
+       y la reenvía en la red, el servidor rechaza la repetición con HTTP 400.
+    2. Hash Criptográfico SHA-256 de la Carga Útil (Payload Fingerprinting):
+       Se calcula el digest SHA-256 de la combinación `session_id + vector_tiempos`.
+       Si un atacante reutiliza el mismo vector biométrico dentro de la ventana de vida,
+       el almacén detecta la colisión y bloquea la inyección.
+    3. Ventana de Frescura Temporal (Timestamp Freshness):
+       Verifica que la marca temporal del cliente no difiera en más de 300 segundos
+       respecto al reloj del servidor, descartando paquetes capturados previamente.
     """
 
     def __init__(self, ttl_seconds: int = 300):
@@ -36,7 +59,9 @@ class AntiReplayStore:
         self._lock = threading.Lock()
 
     def generate_challenge(self, user_id: int, session_id: int) -> str:
-        """Generates and stores a unique cryptographic challenge nonce."""
+        """
+        Genera un nonce criptográfico de 32 bytes aleatorios y lo almacena con TTL de 300 segundos.
+        """
         nonce = secrets.token_urlsafe(32)
         now = time.time()
         with self._lock:
@@ -57,11 +82,11 @@ class AntiReplayStore:
         session_id: int,
     ) -> bool:
         """
-        Validates nonce existence, session ownership, freshness, and single-use status.
-        Returns True if valid and consumed; False if replay or invalid.
+        Valida que el nonce exista, pertenezca a la sesión activa y NO haya sido consumido.
+        Al ser validado, lo marca inmediatamente como consumido (`consumed = True`).
         """
         if not nonce:
-            return True  # If no nonce is supplied, payload-hash validation is checked instead
+            return True  # Si no se envió nonce, se valida por hash de payload
 
         now = time.time()
         with self._lock:
@@ -72,6 +97,7 @@ class AntiReplayStore:
                 return False
 
             if challenge["consumed"]:
+                # Caso CP-S04: Intento de reutilizar un nonce previamente consumido
                 logger.warning(f"Replay attack detected: Nonce already consumed {nonce[:8]}...")
                 return False
 
@@ -83,7 +109,7 @@ class AntiReplayStore:
                 logger.warning(f"Nonce expired {nonce[:8]}...")
                 return False
 
-            # Mark consumed immediately
+            # Marcar consumido inmediatamente para evitar condiciones de carrera
             challenge["consumed"] = True
             return True
 
@@ -94,20 +120,21 @@ class AntiReplayStore:
         raw_events: Optional[List[Dict[str, float]]],
     ) -> bool:
         """
-        Hashes sample payload and ensures it has not been submitted previously in this session.
-        Returns True if fresh; False if replay attack.
+        Genera el hash SHA-256 del vector biométrico y verifica que no sea una muestra duplicada.
         """
         if vector is None and raw_events is None:
             return True
 
         content = vector if vector is not None else raw_events
         serialized = json.dumps(content, sort_keys=True)
+        # Fingerprint único de la muestra para esta sesión
         payload_hash = hashlib.sha256(f"{session_id}:{serialized}".encode()).hexdigest()
 
         now = time.time()
         with self._lock:
             self._cleanup_expired(now)
             if payload_hash in self._consumed_payload_hashes:
+                # Caso CP-S04: Carga útil idéntica reenviada
                 logger.warning(f"Replay attack detected: Biometric payload re-submitted for session {session_id}")
                 return False
 
@@ -115,17 +142,17 @@ class AntiReplayStore:
             return True
 
     def validate_timestamp_freshness(self, timestamp: Optional[float], window_seconds: int = 300) -> bool:
-        """Validates that client timestamp is within an acceptable time window."""
+        """Valida que la marca temporal del cliente se encuentre dentro del margen de 300 segundos."""
         if timestamp is None:
             return True
 
-        # Normalize milliseconds to seconds if necessary
+        # Normalizar de milisegundos a segundos si es necesario
         ts = timestamp / 1000.0 if timestamp > 1e11 else timestamp
         now = time.time()
         return abs(now - ts) <= window_seconds
 
     def _cleanup_expired(self, now: float) -> None:
-        """Purges expired nonces and payload hashes."""
+        """Elimina de memoria los nonces y hashes cuya vigencia ha expirado."""
         expired_nonces = [k for k, v in self._challenges.items() if now > v["expires_at"]]
         for k in expired_nonces:
             del self._challenges[k]
@@ -135,13 +162,13 @@ class AntiReplayStore:
             del self._consumed_payload_hashes[k]
 
     def reset(self) -> None:
-        """Clears all challenges and payload hashes."""
+        """Limpia el almacenamiento para aislamiento de suites de prueba."""
         with self._lock:
             self._challenges.clear()
             self._consumed_payload_hashes.clear()
 
 
-# Global Anti-Replay Store
+# Instancia singleton del almacén Anti-Replay
 anti_replay_store = AntiReplayStore(ttl_seconds=settings.CHALLENGE_NONCE_TTL_SECONDS)
 
 
@@ -152,14 +179,28 @@ def evaluate_session_risk(
     timeout_minutes: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
-    Evaluates continuous risk triggers under Zero Trust principles (RF-04, CP-S07):
-    1. 'ip_change': Current IP differs from session IP registered at login.
-    2. 'session_timeout': Trust window has expired since last biometric verification.
-    3. 'sensitive_operation': Accessing critical business operations requires fresh reauth.
+    Motor de Evaluación Continua de Riesgos bajo la filosofía Zero Trust ("Never Trust, Always Verify").
+
+    Evalúa los 3 Eventos de Riesgo Críticos de la Tesis:
+    ----------------------------------------------------
+    1. 'ip_change' (Caso de Prueba CP-S07):
+       Compara la IP del cliente actual con la IP registrada en la tabla `sessions` en el login.
+       Si difieren (ej. cambio de red WiFi a datos móviles o proxy de atacante), la confianza
+       se suspende de inmediato y se exige verificación biométrica antes de procesar peticiones.
+
+    2. 'session_timeout' (Requisito RF-04):
+       Calcula el tiempo transcurrido desde la última verificación biométrica exitosa
+       (`session.last_biometric_verified_at`). Si han transcurrido más de 10 minutos
+       (REAUTH_TIMEOUT_MINUTES), se exige una nueva prueba de dinámica de tecleo pasiva.
+
+    3. 'sensitive_operation' (Requisito RF-04 / Sección 3.3):
+       Si el usuario intenta ejecutar una transacción corporativa de alto valor
+       (transferencias monetarias, eliminación de datos o cambio de roles), el motor
+       exige una reautenticación activa obligatoria (Step-Up Authentication).
     """
     timeout = timeout_minutes if timeout_minutes is not None else settings.REAUTH_TIMEOUT_MINUTES
 
-    # 1. IP Address Change Detection (CP-S07)
+    # 1. Detección de Anomalía por Cambio Súbito de IP (Caso CP-S07)
     if session.ip_address and current_ip and session.ip_address != current_ip:
         return {
             "reauth_required": True,
@@ -169,7 +210,7 @@ def evaluate_session_risk(
             "session_ip": session.ip_address,
         }
 
-    # 2. Continuous Biometric Verification Timeout
+    # 2. Expiración de la Ventana Temporal de Confianza Biométrica (10 minutos)
     last_verified = session.last_biometric_verified_at or session.created_at
     if last_verified:
         now = datetime.now(timezone.utc)
@@ -185,7 +226,7 @@ def evaluate_session_risk(
                 "session_ip": session.ip_address,
             }
 
-    # 3. Sensitive Operation Trigger
+    # 3. Disparo por Ejecución de Operación Corporativa Sensible
     if operation_sensitive:
         return {
             "reauth_required": True,
@@ -204,9 +245,6 @@ def evaluate_session_risk(
     }
 
 
-from fastapi.responses import JSONResponse
-
-
 def verify_reauthentication(
     db: Session,
     user: User,
@@ -219,20 +257,46 @@ def verify_reauthentication(
     raw_events: Optional[List[Dict[str, float]]] = None,
 ) -> Any:
     """
-    Executes Zero Trust adaptive step-up reauthentication:
-    1. Validates Anti-Replay protection (CP-S04).
-    2. Compares keystroke dynamics against stored template (RF-05).
-    3. Records result to reauth_events and audit_log.
-    4. On success: updates session trust and IP.
-    5. On failure / impostor: revokes session on extreme anomaly or 3rd failed attempt (RF-08, CP-S08).
+    Ejecuta el protocolo completo de Reautenticación Adaptativa Zero Trust.
+
+    Fases del Procedimiento:
+    ------------------------
+    1. Mitigación Anti-Replay (CP-S04):
+       Valida y consume el nonce aleatorio, el hash del vector y la frescura temporal.
+       Si se detecta un intento de repetición, registra 'replay_attack_detected' en la
+       auditoría inmutable y rechaza con HTTP 400 Bad Request.
+
+    2. Inferencia y Verificación Biomecánica:
+       Compara la dinámica de tecleo contra la plantilla cifrada del usuario mediante
+       el clasificador Gradient Boosting y la fórmula híbrida en `biometric_service`.
+
+    3. Trazabilidad:
+       Inserta un registro formal en la tabla `reauth_events` (tipo de riesgo y resultado)
+       y emite el evento correspondiente en `audit_log`.
+
+    4. Rama de Éxito (Genuino):
+       - Actualiza la IP de confianza en la sesión (`session.ip_address = client_ip`).
+       - Refresca el reloj biométrico (`session.last_biometric_verified_at = now()`).
+       - Retorna HTTP 200 OK desbloqueando las operaciones del usuario.
+
+    5. Rama de Fallo / Detección de Impostores (Lógica de los 3 Intentos y Revocación):
+       - Se consultan los intentos fallidos acumulados para esta sesión en `reauth_events`.
+       - Revocación Inmediata de Sesión (`session.revoked = True`) si:
+         a) El score es menor a 0.10 (ataque flagrante de cadencia artificial no humana).
+         b) O si el usuario acumula 3 fallos consecutivos en los desafíos.
+         -> En ambos casos, el token JWT queda invalidado permanentemente en la BD (RF-08, CP-S08).
+            Se responde HTTP 403 con `session_revoked: True` expulsando al atacante al login.
+       - Fallo Leve (Intentos 1 y 2 con score >= 0.10):
+         -> No se revoca la sesión todavía; se genera un nuevo challenge nonce fresco y se
+            responde HTTP 403 con `reauth_status: "retry"` y `attempts_remaining: (3 - fallos)`.
     """
-    # 1. Anti-Replay Validation (CP-S04)
+    # 1. Validación de controles Anti-Replay (CP-S04)
     nonce_valid = anti_replay_store.validate_and_consume_nonce(challenge_nonce, user.id, session.id)
     payload_valid = anti_replay_store.validate_and_consume_payload(session.id, vector, raw_events)
     freshness_valid = anti_replay_store.validate_timestamp_freshness(timestamp)
 
     if not (nonce_valid and payload_valid and freshness_valid):
-        # Register replay attack detection in audit log and reauth_events
+        # RNF-05 / CP-S04: Registrar ataque de repetición en bitácora inmutable
         log_audit_event(
             db=db,
             event_type="replay_attack_detected",
@@ -270,7 +334,7 @@ def verify_reauthentication(
             },
         )
 
-    # 2. Verify keystroke dynamics pattern
+    # 2. Verificación de patrones de dinámica de tecleo
     biometric_result = biometric_service.verify_keystroke_pattern(
         db=db,
         user=user,
@@ -282,7 +346,7 @@ def verify_reauthentication(
     score = float(biometric_result["score"])
     threshold = float(biometric_result["threshold"])
 
-    # 3. Persist reauth event record
+    # 3. Persistir registro de evento de reautenticación en PostgreSQL
     reauth_entry = ReauthEvent(
         user_id=user.id,
         session_id=session.id,
@@ -293,7 +357,7 @@ def verify_reauthentication(
     db.commit()
     db.refresh(reauth_entry)
 
-    # 4. Audit logging
+    # 4. Auditoría inmutable de seguridad
     log_audit_event(
         db=db,
         event_type="reauth_success" if match else "reauth_failure",
@@ -308,9 +372,9 @@ def verify_reauthentication(
         },
     )
 
-    # 5. Handle success
+    # 5. Gestión del Éxito: Actualizar nivel de confianza y nueva IP (CP-S07)
     if match:
-        session.ip_address = client_ip  # Trust state updated for verified IP
+        session.ip_address = client_ip  # Se adopta la nueva IP como válida y confiable
         session.last_biometric_verified_at = datetime.now(timezone.utc)
         db.commit()
         return {
@@ -324,7 +388,7 @@ def verify_reauthentication(
             "new_nonce": None,
         }
 
-    # 6. Handle failure / Impostor (CP-S08, RF-08)
+    # 6. Gestión de Fallo / Detección de Impostores (Lógica de 3 Intentos y Revocación RF-08, CP-S08)
     failed_attempts = (
         db.query(ReauthEvent)
         .filter(
@@ -335,11 +399,13 @@ def verify_reauthentication(
         .count()
     )
 
-    # Extreme attacks (blatant impostors or severely distorted timing) revoke immediately
+    # Revocación inmediata si el score es menor a 0.10 (cadencia artificial o impostor flagrante)
+    # o si se acumulan 3 fallos consecutivos en esta sesión
     is_extreme_attack = (score < 0.10)
     should_revoke = is_extreme_attack or (failed_attempts >= 3)
 
     if should_revoke:
+        # Revocar la sesión en la base de datos de inmediato (RF-08)
         session.revoked = True
         db.commit()
 
@@ -372,7 +438,7 @@ def verify_reauthentication(
             },
         )
 
-    # Non-extreme failure: allow up to 3 attempts without revoking session
+    # Si no es ataque extremo y quedan intentos (< 3): emitir nuevo nonce para reintento
     new_nonce = anti_replay_store.generate_challenge(user.id, session.id)
     attempts_remaining = max(0, 3 - failed_attempts)
 
@@ -389,3 +455,4 @@ def verify_reauthentication(
             "new_nonce": new_nonce,
         },
     )
+

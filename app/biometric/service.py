@@ -1,6 +1,14 @@
 """
-Biometric Service Implementation
-Zero Trust Continuous Keystroke Dynamics Authentication (RF-03, RF-05, RNF-01, RNF-08, CP-S08)
+Servicio Biométrico de Dinámica de Tecleo (app/biometric/service.py).
+Implementa el enrolamiento cifrado en reposo (AES-256-GCM) y la verificación
+de identidad biomecánica en tiempo real mediante un clasificador Gradient Boosting
+entrenado con el Benchmark de Carnegie Mellon (CMU) combinado con scoring híbrido.
+
+Requerimientos y Casos de Prueba asociados:
+- RF-03 / RNF-01: Enrolamiento de perfiles y almacenamiento cifrado en PostgreSQL.
+- RF-05 / CP-S08: Verificación biométrica continua, tolerancia a la varianza humana
+  en vivo y detección de ataques de impostores.
+- RNF-08: Procesamiento seguro sin exposición de teclas en texto plano.
 """
 
 import os
@@ -27,8 +35,13 @@ DEFAULT_MODEL_PATH = os.path.join("ml_models", "keystroke_gb_model.pkl")
 
 class BiometricService:
     """
-    Manages keystroke profile enrollment (AES-256-GCM encryption in DB)
-    and live identity verification via Gradient Boosting and statistical hybrid scoring.
+    Servicio central de biometría conductual de tecleo (Keystroke Dynamics).
+
+    Responsabilidades:
+    1. Enrolamiento seguro: Cifra la plantilla de referencia con AES-256-GCM antes de persistir.
+    2. Descifrado en memoria RAM volátil para evitar fugas de datos en disco.
+    3. Inferencia probabilística con ensemble Gradient Boosting de scikit-learn.
+    4. Scoring Híbrido Multicriterio con tolerancia humana a la fatiga y velocidad de tecleo.
     """
 
     def __init__(self, model_path: str = DEFAULT_MODEL_PATH):
@@ -41,7 +54,11 @@ class BiometricService:
         self._load_model()
 
     def _load_model(self) -> None:
-        """Loads trained Gradient Boosting model bundle from disk if present."""
+        """
+        Carga el artefacto serializado del modelo Gradient Boosting entrenado.
+        Extrae el clasificador, el umbral óptimo calibrado en el EER (theta* = 0.4024),
+        el EER alcanzado (15.45%) y el AUC-ROC (0.9255).
+        """
         if os.path.exists(self.model_path):
             try:
                 bundle = joblib.load(self.model_path)
@@ -68,18 +85,22 @@ class BiometricService:
         raw_events: Optional[List[Dict[str, float]]] = None,
     ) -> KeystrokeProfile:
         """
-        Enrolls or updates a user's biometric keystroke template.
-        The template is encrypted at rest using AES-256-GCM (RF-03, RNF-01).
+        Enrola o actualiza la plantilla biométrica del usuario (RF-03).
+
+        Seguridad (RNF-01):
+        La plantilla calculada (vector de 31 floats) se cifra en memoria con AES-256-GCM
+        mediante `encrypt_vector(template)` y se almacena en formato BYTEA en la tabla
+        `keystroke_profiles.vector_encrypted`. Nunca se escribe en texto plano.
 
         Args:
-            db: Database session
-            user: Authenticated user
-            vector: Optional single feature vector
-            samples: Optional multiple repetition vectors (calculates mean template)
-            raw_events: Optional raw press/release timing events
+            db: Sesión activa de base de datos.
+            user: Usuario autenticado.
+            vector: Vector único opcional.
+            samples: Múltiples repeticiones (se promedian con compute_template_from_samples).
+            raw_events: Eventos down/up de teclado sin procesar.
 
         Returns:
-            KeystrokeProfile: The persisted encrypted profile record.
+            KeystrokeProfile: Registro de base de datos con el criptograma binario.
         """
         if samples is not None and len(samples) > 0:
             template = compute_template_from_samples(samples)
@@ -93,10 +114,10 @@ class BiometricService:
                 detail="Must provide either 'vector', 'samples', or 'raw_events' for enrollment.",
             )
 
-        # Encrypt the template in memory with AES-256-GCM before writing to DB (RNF-01)
+        # Cifrado en reposo con AES-256-GCM (RNF-01)
         encrypted_data = encrypt_vector(template)
 
-        # Check for existing profile
+        # Buscar si ya existe un perfil para actualizarlo o crear uno nuevo
         existing_profile = (
             db.query(KeystrokeProfile)
             .filter(KeystrokeProfile.user_id == user.id)
@@ -126,15 +147,39 @@ class BiometricService:
         custom_threshold: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
-        Verifies a keystroke timing sample against the user's stored encrypted template (RF-05).
-        Decrypts template in memory and scores similarity via Gradient Boosting + statistical metrics.
+        Verifica una muestra biomecánica contra la plantilla cifrada del usuario (RF-05, CP-S08).
 
-        Args:
-            db: Database session
-            user: Authenticated user attempting verification
-            vector: Timing feature vector from client
-            raw_events: Raw press/release timing events
-            custom_threshold: Optional override for risk-adaptive thresholding
+        ¿Cómo opera la Inferencia y la Fórmula Híbrida en CP-S08?
+        ---------------------------------------------------------
+        1. Descifrado en Memoria (AES-256-GCM):
+           Recupera `vector_encrypted` de la BD y lo descifra en RAM con `decrypt_vector`.
+           Si el tag GCM fue manipulado, se rechaza la operación (CP-S10).
+
+        2. Vector de Diferencias Absolutas (Insumo de Gradient Boosting):
+           El clasificador fue entrenado para recibir la distancia absoluta componente a
+           componente entre la muestra candidata y la plantilla de referencia:
+           Delta = |X_muestra - X_plantilla|
+
+        3. Tolerancia a la Varianza Humana en Vivo (Live Human Tempo Tolerance):
+           Un usuario legítimo puede escribir más rápido o más lento según la hora del día,
+           el cansancio o el café (ratio de velocidad entre 0.70x y 1.38x).
+           - Se calcula el ratio de velocidad: `speed_ratio = mean(muestra) / mean(plantilla)`.
+           - Se evalúa la correlación de ritmo de Pearson (`corr = np.corrcoef(...)`).
+           - Si la cadencia relativa es humana (0.70 <= speed_ratio <= 1.38), se escala
+             temporalmente la muestra (`aligned_sample = sample * (mean_t / mean_s)`)
+             para alinear el compás musical de los dedos y evitar falsos rechazos injustos.
+
+        4. Fórmula Híbrida de Decisión:
+           - En usuarios genuinos con correlación rítmica (corr > 0.50):
+             Score = 0.50 * Clasificador_GB + 0.35 * Similitud_Estadística + 0.15 * Correlación
+           - En impostores o cadencias no humanas (ataques de replay o mecanografía desfasada):
+             Score = (0.70 * Clasificador_GB + 0.30 * Similitud_Estadística) * Penalización
+             (Donde la penalización es 0.50 si la velocidad diverge más del doble o la mitad).
+
+        5. Umbral de Decisión:
+           El puntaje final se compara con el umbral calibrado (theta* = 0.4024).
+           Si Score >= 0.4024 -> match = True (Usuario legítimo reconocido).
+           Si Score < 0.4024 -> match = False (Impostor o usuario no verificado).
 
         Returns:
             Dict[str, Any]: {"match": bool, "score": float, "threshold": float}
@@ -151,7 +196,7 @@ class BiometricService:
                 detail="No biometric keystroke profile enrolled for this user.",
             )
 
-        # Process input sample
+        # Procesar vector o eventos de entrada
         if vector is not None and len(vector) > 0:
             sample = validate_and_normalize_vector(vector)
         elif raw_events is not None and len(raw_events) > 0:
@@ -162,7 +207,7 @@ class BiometricService:
                 detail="Must provide either 'vector' or 'raw_events' for verification.",
             )
 
-        # Decrypt stored template in memory (AES-256-GCM)
+        # Descifrado seguro en memoria RAM volátil mediante AES-256-GCM (RNF-01, CP-S10)
         try:
             template = decrypt_vector(profile.vector_encrypted)
         except Exception as e:
@@ -174,7 +219,7 @@ class BiometricService:
 
         threshold = custom_threshold if custom_threshold is not None else self.optimal_threshold
 
-        # If dimension mismatch, fail verification immediately
+        # Validación de dimensionalidad: Si difiere, rechazar de inmediato
         if len(sample) != len(template):
             logger.warning(
                 f"Biometric dimension mismatch: template={len(template)}, sample={len(sample)}"
@@ -185,12 +230,12 @@ class BiometricService:
                 "threshold": round(threshold, 4),
             }
 
-        # If 31 dimensions and model is loaded, evaluate hybrid score with human tempo tolerance
+        # Inferencia con Gradient Boosting y scoring híbrido si es el vector estándar de 31-D
         if len(sample) == 31 and self.model is not None:
             sample_arr = np.array(sample, dtype=float)
             template_arr = np.array(template, dtype=float)
 
-            # Calculate typing speed ratio and rhythm profile correlation
+            # Cálculo de velocidad de tecleo relativa y correlación de perfil rítmico
             mean_t = float(np.mean(template_arr))
             mean_s = float(np.mean(sample_arr))
             speed_ratio = mean_s / (mean_t + 1e-6)
@@ -202,34 +247,39 @@ class BiometricService:
             else:
                 corr = 0.0
 
-            # Natural human typing speed variation in live browser (0.70x to 1.38x)
+            # Tolerancia biológica humana: Variación natural de velocidad (0.70x a 1.38x)
             if 0.70 <= speed_ratio <= 1.38:
                 tempo_scale = mean_t / mean_s
                 aligned_sample = list(sample_arr * tempo_scale)
             else:
                 aligned_sample = sample
 
+            # Vector de diferencias absolutas Delta = |X_candidato - X_plantilla|
             diff_raw = np.abs(sample_arr - template_arr).reshape(1, -1)
             diff_aligned = np.abs(np.array(aligned_sample) - template_arr).reshape(1, -1)
 
+            # Inferencia de probabilidades con el clasificador Gradient Boosting
             gb_raw = float(self.model.predict_proba(diff_raw)[0, 1])
             gb_aligned = float(self.model.predict_proba(diff_aligned)[0, 1])
 
+            # Similitud estadística por distancia Manhattan normalizada
             stat_raw = calculate_statistical_similarity(template, sample)
             stat_aligned = calculate_statistical_similarity(template, aligned_sample)
 
             if 0.70 <= speed_ratio <= 1.38 and corr > 0.50:
+                # Caso genuino en vivo: Fusión adaptativa compensando variabilidad humana
                 gb_score = max(gb_raw, gb_aligned * 0.90)
                 stat_score = max(stat_raw, stat_aligned * 0.90)
                 score = 0.50 * gb_score + 0.35 * stat_score + 0.15 * max(0.0, corr)
             else:
-                # Impostor or extreme speed divergence (e.g. >= 2.0x, <= 0.50x, or erratic/flat rhythm)
+                # Caso impostor o divergencia extrema de velocidad (>= 1.9x o <= 0.5x)
                 penalty = 1.0
                 if speed_ratio >= 1.90 or speed_ratio <= 0.50:
                     penalty = 0.50
+                # Fórmula estándar híbrida: 70% Clasificador Gradient Boosting + 30% Estadística
                 score = (0.70 * gb_raw + 0.30 * stat_raw) * penalty
         else:
-            # General phrase length or fallback: statistical normalized similarity
+            # Fallback o frases de longitud arbitraria: similitud estadística normalizada
             score = calculate_statistical_similarity(template, sample)
 
         match = bool(score >= threshold)
@@ -240,5 +290,6 @@ class BiometricService:
         }
 
 
-# Singleton service instance
+# Instancia singleton del servicio biométrico
 biometric_service = BiometricService()
+

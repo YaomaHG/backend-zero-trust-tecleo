@@ -1,15 +1,32 @@
 /**
- * KeystrokeCapture - High-Resolution Keystroke Dynamics Timing Engine
- * Zero Trust Biometric Continuous Authentication (Thesis Section 3.6.3 & RNF-08)
- *
- * Enforces strict RNF-08 Data Minimization & Privacy:
- * - Employs window.performance.now() with sub-millisecond precision converted to seconds.
- * - Extracts physical hold durations (H), Down-Down latencies (DD), and Up-Down flight times (UD).
- * - NEVER processes, logs, or transmits key characters, letters, or plaintext strings to the backend.
- * - Modifier keys (Shift, Control, Alt, CapsLock, Meta, Tab) are strictly ignored.
- * - Always normalizes the extracted feature vector to exactly 31 features for '.tie5Roanl'.
+ * Motor de Captura y Análisis de Dinámica de Tecleo de Alta Precisión (app/static/js/keystroke.js)
+ * Tesis de Ingeniería de Software: Reautenticación Adaptativa Zero Trust
+ * 
+ * Requerimientos y Fundamentos Técnicos:
+ * - RNF-08 (Minimización de Datos y Privacidad):
+ *   NUNCA captura, almacena ni transmite los caracteres o letras presionadas por el usuario.
+ *   El servidor jamás recibe contraseñas ni textos; únicamente vectores numéricos de duraciones.
+ * 
+ * - Alta Resolución con window.performance.now():
+ *   Captura marcas de tiempo con precisión de microsegundos (sub-milisegundos) basadas en un
+ *   reloj monotónico de hardware (DOMHighResTimeStamp). Supera a Date.now() porque no está
+ *   sujeto a saltos de reloj ni sincronizaciones NTP del sistema operativo.
+ * 
+ * - Filtrado de Teclas Modificadoras (Shift, Control, Alt, CapsLock, Tab):
+ *   Para escribir la letra mayúscula 'R' en '.tie5Roanl', el usuario suele presionar la tecla Shift.
+ *   Si Shift se capturara como una pulsación separada, distorsionaría la longitud del vector
+ *   y agregaría ruido dependiente de configuraciones de teclado. Al filtrarlas, garantizamos que
+ *   sólo se evalúe el ritmo motor de los caracteres de la frase.
+ * 
+ * - Estructura del Vector de 31 Dimensiones (Benchmark CMU):
+ *   Frase objetivo obligatoria: ".tie5Roanl" + tecla Enter (11 pulsaciones físicas en total):
+ *   1) 11 Tiempos de Retención (Hold Time H): H_i = release_i - press_i
+ *   2) 10 Tiempos de Vuelo Tecla a Tecla (Down-Down DD): DD_i = press_{i+1} - press_i
+ *   3) 10 Tiempos de Transición (Up-Down UD): UD_i = press_{i+1} - release_i
+ *   Total: 11 + 10 + 10 = 31 números flotantes normalizados en segundos.
  */
 
+// Catálogo de teclas modificadoras que se filtran para evitar ruido en la biometría
 const MODIFIER_KEYS = new Set([
     "Shift", "Control", "Alt", "AltGraph", "CapsLock", "Meta", "Tab",
     "ShiftLeft", "ShiftRight", "ControlLeft", "ControlRight", "AltLeft", "AltRight",
@@ -18,21 +35,21 @@ const MODIFIER_KEYS = new Set([
 
 class KeystrokeCapture {
     /**
-     * @param {Object} options Configuration parameters
-     * @param {string} options.targetPhrase Expected target phrase reference (e.g., '.tie5Roanl')
-     * @param {number} options.samplesRequired Number of repetitions needed for enrollment (default: 3)
-     * @param {boolean} options.requireEnter Whether the Return/Enter key is required to complete the sample (default: true)
-     * @param {Function} options.onKeypress Callback fired on each keypress: (currentKeys, targetKeys)
-     * @param {Function} options.onSampleCaptured Callback fired on repetition completion: (sampleIndex, totalSamples, vector)
-     * @param {Function} options.onEnrollmentReady Callback fired when all repetitions are collected: (samples)
-     * @param {Function} options.onError Callback fired on error or inconsistency: (errorMessage)
+     * @param {Object} options Parámetros de configuración
+     * @param {string} options.targetPhrase Frase objetivo de referencia ('.tie5Roanl')
+     * @param {number} options.samplesRequired Número de repeticiones para enrolamiento (default: 3)
+     * @param {boolean} options.requireEnter Exige tecla Enter para finalizar la muestra (default: true)
+     * @param {Function} options.onKeypress Callback ejecutado en cada pulsación: (teclasActuales, teclasEsperadas)
+     * @param {Function} options.onSampleCaptured Callback al completar una repetición: (indice, total, vector31D)
+     * @param {Function} options.onEnrollmentReady Callback al reunir las 3 repeticiones: (samples)
+     * @param {Function} options.onError Callback ante errores de captura o pulsación de borrado
      */
     constructor(options = {}) {
         this.targetPhrase = options.targetPhrase || ".tie5Roanl";
         this.samplesRequired = options.samplesRequired || 3;
         this.requireEnter = options.requireEnter !== undefined ? options.requireEnter : true;
 
-        // Total expected key events: phrase length (10) + 1 (Enter) = 11 keys -> 31 timing dimensions
+        // Longitud esperada: 10 caracteres alfanuméricos + 1 tecla Enter = 11 eventos -> 31 dimensiones
         this.expectedKeyCount = this.targetPhrase.length + (this.requireEnter ? 1 : 0);
 
         this.onKeypress = options.onKeypress || (() => {});
@@ -40,18 +57,18 @@ class KeystrokeCapture {
         this.onEnrollmentReady = options.onEnrollmentReady || (() => {});
         this.onError = options.onError || (() => {});
 
-        // Internal recording state
+        // Estado interno de captura
         this.inputElement = null;
-        this.activeKeys = new Map(); // event.code -> [press timestamps] queue
-        this.currentKeySequence = []; // List of { code: string, press: float, release: float }
-        this.collectedSamples = []; // List of feature vectors for enrollment
+        this.activeKeys = new Map(); // Mapa: event.code -> cola de marcas de tiempo de presión
+        this.currentKeySequence = []; // Lista de tuplas temporales: { code, press, release }
+        this.collectedSamples = []; // Lista de vectores de 31 dimensiones para enrolamiento
 
         this._boundKeyDown = this._handleKeyDown.bind(this);
         this._boundKeyUp = this._handleKeyUp.bind(this);
     }
 
     /**
-     * Attaches capture listeners to an HTML input or textarea element.
+     * Vincula los escuchadores de eventos keydown y keyup a un input HTML.
      * @param {HTMLInputElement|HTMLTextAreaElement} element
      */
     attach(element) {
@@ -63,7 +80,7 @@ class KeystrokeCapture {
     }
 
     /**
-     * Detaches listeners and frees resources.
+     * Desvincula los escuchadores y libera memoria.
      */
     detach() {
         if (this.inputElement) {
@@ -74,7 +91,7 @@ class KeystrokeCapture {
     }
 
     /**
-     * Resets the entire capture session, clearing all samples and input buffers.
+     * Restablece completamente la sesión de captura eliminando todas las muestras previas.
      */
     reset() {
         this.activeKeys.clear();
@@ -86,7 +103,7 @@ class KeystrokeCapture {
     }
 
     /**
-     * Clears only the current single repetition buffer (e.g. after backspace or error).
+     * Limpia únicamente la repetición actual si el usuario cometió un error o borró texto.
      */
     clearCurrentSample() {
         this.activeKeys.clear();
@@ -97,27 +114,28 @@ class KeystrokeCapture {
     }
 
     /**
-     * Internal keydown event listener with sub-millisecond precision.
-     * Modifier keys (Shift, Control, Alt, CapsLock, Meta, Tab) are ignored.
+     * Manejador del evento físico 'keydown'.
+     * Utiliza performance.now() para registrar la marca de presión en sub-milisegundos.
      * @private
      */
     _handleKeyDown(event) {
-        // Discard auto-repeat events caused by holding keys down
+        // Descartar repetición automática de tecla por mantenerla presionada
         if (event.repeat) return;
 
-        // If backspace or escape is pressed, reset the current repetition to maintain clean timing vectors
+        // Si se presiona Backspace o Escape, reiniciar la muestra actual para garantizar cadencia pura
         if (event.key === "Backspace" || event.key === "Escape") {
             this.clearCurrentSample();
             this.onError("Pulsación corregida con tecla de borrado. Muestra reiniciada.");
             return;
         }
 
-        // Strictly ignore modifier keys (Shift, Control, Alt, CapsLock, Meta, Tab)
+        // FILTRADO ESTRICTO DE TECLAS MODIFICADORAS (Shift, Ctrl, Alt, CapsLock, Tab)
+        // Evita distorsionar el vector biométrico cuando el usuario presiona Shift para mayúsculas
         if (MODIFIER_KEYS.has(event.key) || MODIFIER_KEYS.has(event.code)) {
             return;
         }
 
-        // Record high-precision timestamp converted from milliseconds to seconds
+        // Captura con performance.now() convertida de milisegundos a segundos (estándar CMU)
         const pressTimeSec = performance.now() / 1000.0;
 
         if (!this.activeKeys.has(event.code)) {
@@ -130,11 +148,12 @@ class KeystrokeCapture {
     }
 
     /**
-     * Internal keyup event listener.
+     * Manejador del evento físico 'keyup'.
+     * Registra el instante de liberación de la tecla para calcular los tiempos Hold y Flight.
      * @private
      */
     _handleKeyUp(event) {
-        // Strictly ignore modifier keys and corrections on keyup
+        // Ignorar teclas modificadoras y de borrado
         if (MODIFIER_KEYS.has(event.key) || MODIFIER_KEYS.has(event.code)) {
             return;
         }
@@ -150,14 +169,14 @@ class KeystrokeCapture {
 
         const pressTimeSec = queue.shift();
 
-        // Store pure timing tuple without characters or key names (RNF-08 Data Minimization)
+        // Minimización de Datos (RNF-08): Solo se preservan las marcas de tiempo físicas
         this.currentKeySequence.push({
             code: event.code,
             press: pressTimeSec,
             release: releaseTimeSec
         });
 
-        // Check if sample completion condition is met
+        // Verificar condición de muestra completa (tecla Enter o número de teclas alcanzado)
         const isEnterPressed = (event.key === "Enter" || event.code === "Enter");
         const reachedKeyCount = this.currentKeySequence.length >= this.expectedKeyCount;
 
@@ -167,19 +186,29 @@ class KeystrokeCapture {
     }
 
     /**
-     * Extracts timing feature vector from raw key events: [H0, DD01, UD01, H1, ...].
-     * Normalizes output strictly to 31 features (11 Hold + 10 DD + 10 UD) for '.tie5Roanl'.
+     * Extrae el vector de características de 31 dimensiones a partir de los eventos temporales.
+     * 
+     * ¿Cómo se construye el vector exacto de 31 características para '.tie5Roanl'?
+     * -----------------------------------------------------------------------------
+     * 1. Ordena cronológicamente los eventos por tiempo de presión.
+     * 2. Si se teclearon los 10 caracteres pero faltó el Enter, sintetiza el evento 11 con la media.
+     * 3. Itera sobre los 11 eventos:
+     *    - Calcula H_i = release_i - press_i (11 tiempos Hold)
+     *    - Calcula DD_i = press_{i+1} - press_i (10 tiempos Down-Down)
+     *    - Calcula UD_i = press_{i+1} - release_i (10 tiempos Up-Down)
+     * 4. Ajusta estrictamente el resultado a exactamente 31 valores numéricos flotantes.
+     * 
      * @param {Array<{code?: string, press: number, release: number}>} events
-     * @returns {Array<number>} Exactly 31 floats
+     * @returns {Array<number>} Vector exacto de 31 números flotantes
      */
     extractVector(events) {
         if (!events || events.length < 2) return [];
 
-        // Chronologically sort events by press time to accurately compute Hold and Flight transitions
+        // Ordenar cronológicamente por tiempo de presión
         const sorted = [...events].sort((a, b) => a.press - b.press);
 
-        // If exactly 10 characters typed (.tie5Roanl) and Enter was not captured or omitted,
-        // synthesize the 11th Return key from mean timing characteristics to guarantee 31 features
+        // Si se capturaron los 10 caracteres de la frase pero se omitió el Enter final,
+        // sintetizar la pulsación 11 usando la media de tiempos para asegurar consistencia
         if (sorted.length === 10) {
             const lastEvent = sorted[9];
             let totalHold = 0;
@@ -201,28 +230,28 @@ class KeystrokeCapture {
             });
         }
 
-        // Clamp to 11 key events (10 chars + Enter)
+        // Limitar a los 11 eventos clave (10 caracteres + Enter)
         const sampleEvents = sorted.length > 11 ? sorted.slice(0, 11) : sorted;
         const n = sampleEvents.length;
 
         let vector = [];
         for (let i = 0; i < n; i++) {
-            // Hold duration H_i = release_i - press_i
+            // Tiempo de Retención H_i = t_liberación - t_presión
             const holdTime = Math.max(0.01, sampleEvents[i].release - sampleEvents[i].press);
             vector.push(Number(holdTime.toFixed(6)));
 
             if (i < n - 1) {
-                // Down-Down latency: press_{i+1} - press_i
+                // Tiempo de Vuelo Tecla a Tecla DD_i = t_presión(i+1) - t_presión(i)
                 const ddTime = Math.max(0.01, sampleEvents[i + 1].press - sampleEvents[i].press);
                 vector.push(Number(ddTime.toFixed(6)));
 
-                // Up-Down flight time: press_{i+1} - release_i
+                // Tiempo de Transición UD_i = t_presión(i+1) - t_liberación(i)
                 const udTime = sampleEvents[i + 1].press - sampleEvents[i].release;
                 vector.push(Number(udTime.toFixed(6)));
             }
         }
 
-        // Enforce strict 31-feature vector length constraint
+        // Restricción estricta de dimensionalidad a exactamente 31 valores
         if (vector.length > 31) {
             vector = vector.slice(0, 31);
         } else if (vector.length > 0 && vector.length < 31) {
@@ -236,7 +265,7 @@ class KeystrokeCapture {
     }
 
     /**
-     * Finalizes the current repetition, computes 31-dimensional vector, and triggers callbacks.
+     * Finaliza la captura de una repetición, valida su longitud y notifica a la SPA.
      * @private
      */
     _processCompletedSample() {
@@ -260,6 +289,7 @@ class KeystrokeCapture {
 
         this.onSampleCaptured(sampleIndex, this.samplesRequired, vector);
 
+        // Si se reunieron las 3 repeticiones requeridas para enrolamiento (RF-03)
         if (this.collectedSamples.length >= this.samplesRequired) {
             const finalSamples = [...this.collectedSamples];
             this.onEnrollmentReady(finalSamples);
@@ -267,7 +297,7 @@ class KeystrokeCapture {
     }
 
     /**
-     * Gets the last captured sample vector (useful for single-shot verification / challenge modal).
+     * Obtiene el último vector capturado (utilizado para reautenticación activa / modal).
      * @returns {Array<number>|null}
      */
     getLastVector() {
@@ -278,5 +308,6 @@ class KeystrokeCapture {
     }
 }
 
-// Export for browser global scope
+// Exportar clase al entorno global del navegador
 window.KeystrokeCapture = KeystrokeCapture;
+

@@ -6,7 +6,7 @@
 [![Tests Passing](https://img.shields.io/badge/pytest-33%20passed-brightgreen.svg)](#)
 [![Biometrics](https://img.shields.io/badge/ML-Gradient%20Boosting%20(CMU)-orange.svg)](#)
 
-Proyecto de Titulación de Ingeniería de Software para la **Segunda Evaluación Parcial** con el asesor de tesis **Dr. Armando Román**. Desarrollado por **Omar Hernández** y **Salvador Garibay**.
+Proyecto de Titulación de Ingeniería de Software con el asesor de tesis **D.Ed. Armando Román**. Desarrollado por **Omar Hernández** y **Salvador Garibay**.
 
 ---
 
@@ -245,4 +245,4 @@ Evaluado sobre el Benchmark Internacional de Dinámica de Tecleo de la **Carnegi
 - **Tasa de Falsa Aceptación (FAR):** `15.44%`
 - **Tasa de Falso Rechazo (FRR):** `15.47%`
 
-Para más detalles, consulta [docs/BIOMETRIC_EVALUATION_REPORT.md](docs/BIOMETRIC_EVALUATION_REPORT.md) y [docs/GUIA_DEFENSA_ASESOR.md](docs/GUIA_DEFENSA_ASESOR.md).
+Para más detalles, consulta [docs/BIOMETRIC_EVALUATION_REPORT.md](docs/BIOMETRIC_EVALUATION_REPORT.md).

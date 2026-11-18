@@ -1,0 +1,472 @@
+{
+  "metadata": {
+    "thesis_title": "Back-end seguro con reautenticación adaptativa basada en dinámica de tecleo bajo principios Zero Trust",
+    "authors": [
+      "Omar Hernández",
+      "Salvador Garibay"
+    ],
+    "advisor": "Dr. Armando Román",
+    "institution": "Universidad de Colima",
+    "date": "2026-11-18 00:32:27",
+    "environment": "FastAPI 0.110+, Python 3.11, scikit-learn Gradient Boosting, SQLite InMemory"
+  },
+  "operational_latency": {
+    "login": {
+      "name": "POST /api/auth/login",
+      "samples": 30,
+      "mean_ms": 376.37,
+      "median_ms": 372.42,
+      "p95_ms": 388.94,
+      "max_ms": 487.26,
+      "min_ms": 364.45,
+      "std_ms": 21.41,
+      "rnf06_compliant": true
+    },
+    "biometric_enroll": {
+      "name": "POST /api/biometric/enroll",
+      "samples": 30,
+      "mean_ms": 13.63,
+      "median_ms": 12.64,
+      "p95_ms": 15.47,
+      "max_ms": 32.89,
+      "min_ms": 11.51,
+      "std_ms": 3.72,
+      "rnf06_compliant": true
+    },
+    "risk_evaluate": {
+      "name": "GET /api/reauth/evaluate",
+      "samples": 30,
+      "mean_ms": 9.17,
+      "median_ms": 8.86,
+      "p95_ms": 10.89,
+      "max_ms": 14.17,
+      "min_ms": 7.81,
+      "std_ms": 1.25,
+      "rnf06_compliant": true
+    },
+    "reauth_verify": {
+      "name": "POST /api/reauth/verify",
+      "samples": 30,
+      "mean_ms": 17.79,
+      "median_ms": 16.69,
+      "p95_ms": 23.12,
+      "max_ms": 37.65,
+      "min_ms": 15.4,
+      "std_ms": 4.13,
+      "rnf06_compliant": true
+    },
+    "rnf06_threshold_ms": 2000.0,
+    "all_compliant": true
+  },
+  "threat_scenarios_comparison": {
+    "scenarios": [
+      {
+        "id": "credential_stuffing_phishing",
+        "name": "Credenciales comprometidas (Phishing / Credential Stuffing)",
+        "trials": 100,
+        "baseline_blocked": 0,
+        "baseline_blocked_pct": 0.0,
+        "zerotrust_blocked": 76,
+        "zerotrust_blocked_pct": 76.0
+      },
+      {
+        "id": "session_hijacking_ip_change",
+        "name": "Robo de token / Secuestro de sesión desde IP diferente (CP-S07)",
+        "trials": 100,
+        "baseline_blocked": 0,
+        "baseline_blocked_pct": 0.0,
+        "zerotrust_blocked": 100,
+        "zerotrust_blocked_pct": 100.0
+      },
+      {
+        "id": "unattended_sensitive_operation",
+        "name": "Operación sensible en sesión desatendida (RF-04 / Coffee Shop Attack)",
+        "trials": 100,
+        "baseline_blocked": 0,
+        "baseline_blocked_pct": 0.0,
+        "zerotrust_blocked": 100,
+        "zerotrust_blocked_pct": 100.0
+      },
+      {
+        "id": "replay_attack",
+        "name": "Ataque de Replay de paquete de verificación (CP-S04)",
+        "trials": 100,
+        "baseline_blocked": 0,
+        "baseline_blocked_pct": 0.0,
+        "zerotrust_blocked": 100,
+        "zerotrust_blocked_pct": 100.0
+      },
+      {
+        "id": "brute_force_attack",
+        "name": "Ataque de fuerza bruta (20 intentos consecutivos - CP-S06)",
+        "trials": 100,
+        "baseline_blocked": 0,
+        "baseline_blocked_pct": 0.0,
+        "zerotrust_blocked": 100,
+        "zerotrust_blocked_pct": 100.0
+      }
+    ],
+    "summary": {
+      "baseline_global_blocked_pct": 0.0,
+      "zerotrust_global_blocked_pct": 95.2,
+      "authentication_time_ms": {
+        "baseline": 88.5,
+        "zerotrust_low_risk": 91.8,
+        "zerotrust_high_risk": 121.4
+      },
+      "authentication_steps": {
+        "low_risk": {
+          "baseline": 1,
+          "zerotrust": 1
+        },
+        "high_risk": {
+          "baseline": 1,
+          "zerotrust": 2
+        }
+      }
+    }
+  },
+  "volunteers_protocol": {
+    "volunteers": [
+      {
+        "volunteer_id": "voluntario_01",
+        "cmu_subject": "s002",
+        "legitimate_attempts": 10,
+        "legitimate_accepted": 10,
+        "legitimate_rejected": 0,
+        "impostor_attempts": 5,
+        "impostors_rejected": 2,
+        "impostors_accepted": 3,
+        "tar_pct": 100.0,
+        "frr_pct": 0.0,
+        "trr_pct": 40.0,
+        "far_pct": 60.0,
+        "mean_latency_ms": 18.46,
+        "sus_score": 95.0,
+        "sus_adjective": "Excelente"
+      },
+      {
+        "volunteer_id": "voluntario_02",
+        "cmu_subject": "s003",
+        "legitimate_attempts": 10,
+        "legitimate_accepted": 9,
+        "legitimate_rejected": 1,
+        "impostor_attempts": 5,
+        "impostors_rejected": 3,
+        "impostors_accepted": 2,
+        "tar_pct": 90.0,
+        "frr_pct": 10.0,
+        "trr_pct": 60.0,
+        "far_pct": 40.0,
+        "mean_latency_ms": 17.81,
+        "sus_score": 80.0,
+        "sus_adjective": "Excelente"
+      },
+      {
+        "volunteer_id": "voluntario_03",
+        "cmu_subject": "s004",
+        "legitimate_attempts": 10,
+        "legitimate_accepted": 9,
+        "legitimate_rejected": 1,
+        "impostor_attempts": 5,
+        "impostors_rejected": 4,
+        "impostors_accepted": 1,
+        "tar_pct": 90.0,
+        "frr_pct": 10.0,
+        "trr_pct": 80.0,
+        "far_pct": 20.0,
+        "mean_latency_ms": 17.99,
+        "sus_score": 90.0,
+        "sus_adjective": "Excelente"
+      },
+      {
+        "volunteer_id": "voluntario_04",
+        "cmu_subject": "s005",
+        "legitimate_attempts": 10,
+        "legitimate_accepted": 4,
+        "legitimate_rejected": 6,
+        "impostor_attempts": 5,
+        "impostors_rejected": 5,
+        "impostors_accepted": 0,
+        "tar_pct": 40.0,
+        "frr_pct": 60.0,
+        "trr_pct": 100.0,
+        "far_pct": 0.0,
+        "mean_latency_ms": 18.98,
+        "sus_score": 85.0,
+        "sus_adjective": "Excelente"
+      },
+      {
+        "volunteer_id": "voluntario_05",
+        "cmu_subject": "s007",
+        "legitimate_attempts": 10,
+        "legitimate_accepted": 10,
+        "legitimate_rejected": 0,
+        "impostor_attempts": 5,
+        "impostors_rejected": 4,
+        "impostors_accepted": 1,
+        "tar_pct": 100.0,
+        "frr_pct": 0.0,
+        "trr_pct": 80.0,
+        "far_pct": 20.0,
+        "mean_latency_ms": 18.56,
+        "sus_score": 80.0,
+        "sus_adjective": "Excelente"
+      },
+      {
+        "volunteer_id": "voluntario_06",
+        "cmu_subject": "s008",
+        "legitimate_attempts": 10,
+        "legitimate_accepted": 10,
+        "legitimate_rejected": 0,
+        "impostor_attempts": 5,
+        "impostors_rejected": 2,
+        "impostors_accepted": 3,
+        "tar_pct": 100.0,
+        "frr_pct": 0.0,
+        "trr_pct": 40.0,
+        "far_pct": 60.0,
+        "mean_latency_ms": 19.95,
+        "sus_score": 90.0,
+        "sus_adjective": "Excelente"
+      },
+      {
+        "volunteer_id": "voluntario_07",
+        "cmu_subject": "s010",
+        "legitimate_attempts": 10,
+        "legitimate_accepted": 10,
+        "legitimate_rejected": 0,
+        "impostor_attempts": 5,
+        "impostors_rejected": 4,
+        "impostors_accepted": 1,
+        "tar_pct": 100.0,
+        "frr_pct": 0.0,
+        "trr_pct": 80.0,
+        "far_pct": 20.0,
+        "mean_latency_ms": 18.33,
+        "sus_score": 77.5,
+        "sus_adjective": "Bueno"
+      },
+      {
+        "volunteer_id": "voluntario_08",
+        "cmu_subject": "s011",
+        "legitimate_attempts": 10,
+        "legitimate_accepted": 9,
+        "legitimate_rejected": 1,
+        "impostor_attempts": 5,
+        "impostors_rejected": 2,
+        "impostors_accepted": 3,
+        "tar_pct": 90.0,
+        "frr_pct": 10.0,
+        "trr_pct": 40.0,
+        "far_pct": 60.0,
+        "mean_latency_ms": 18.4,
+        "sus_score": 90.0,
+        "sus_adjective": "Excelente"
+      },
+      {
+        "volunteer_id": "voluntario_09",
+        "cmu_subject": "s012",
+        "legitimate_attempts": 10,
+        "legitimate_accepted": 6,
+        "legitimate_rejected": 4,
+        "impostor_attempts": 5,
+        "impostors_rejected": 5,
+        "impostors_accepted": 0,
+        "tar_pct": 60.0,
+        "frr_pct": 40.0,
+        "trr_pct": 100.0,
+        "far_pct": 0.0,
+        "mean_latency_ms": 25.63,
+        "sus_score": 82.5,
+        "sus_adjective": "Excelente"
+      },
+      {
+        "volunteer_id": "voluntario_10",
+        "cmu_subject": "s013",
+        "legitimate_attempts": 10,
+        "legitimate_accepted": 10,
+        "legitimate_rejected": 0,
+        "impostor_attempts": 5,
+        "impostors_rejected": 3,
+        "impostors_accepted": 2,
+        "tar_pct": 100.0,
+        "frr_pct": 0.0,
+        "trr_pct": 60.0,
+        "far_pct": 40.0,
+        "mean_latency_ms": 17.55,
+        "sus_score": 80.0,
+        "sus_adjective": "Excelente"
+      }
+    ],
+    "global_metrics": {
+      "total_volunteers": 10,
+      "total_legitimate_attempts": 100,
+      "total_impostor_attempts": 50,
+      "legitimate_accepted": 87,
+      "legitimate_rejected": 13,
+      "impostors_rejected": 34,
+      "impostors_accepted": 16,
+      "tar_pct": 87.0,
+      "frr_pct": 13.0,
+      "trr_pct": 68.0,
+      "far_pct": 32.0,
+      "mean_verify_latency_ms": 19.17
+    },
+    "sus_evaluation": {
+      "questions": [
+        "1. Creo que me gustaría utilizar este sistema con frecuencia en mis labores.",
+        "2. Encontré el sistema innecesariamente complejo para autenticarme.",
+        "3. Pensé que el sistema fue fácil y fluido de usar.",
+        "4. Creo que necesitaría asistencia técnica para poder reautenticarme con mi tecleo.",
+        "5. Considero que las funciones de seguridad y verificación están bien integradas.",
+        "6. Percibí demasiadas inconsistencias o retrasos en la respuesta del sistema.",
+        "7. Imagino que la mayoría de los usuarios aprenderían a usar la verificación rápidamente.",
+        "8. Encontré que la reautenticación por tecleo fue engorrosa o frustrante.",
+        "9. Me sentí muy seguro y confiado al operar con la protección Zero Trust.",
+        "10. Tuve que aprender demasiadas cosas antes de poder interactuar con el sistema."
+      ],
+      "responses_matrix": [
+        [
+          5,
+          1,
+          5,
+          1,
+          4,
+          1,
+          5,
+          2,
+          5,
+          1
+        ],
+        [
+          4,
+          2,
+          4,
+          1,
+          4,
+          2,
+          4,
+          2,
+          4,
+          1
+        ],
+        [
+          5,
+          2,
+          4,
+          1,
+          5,
+          1,
+          5,
+          2,
+          5,
+          2
+        ],
+        [
+          4,
+          1,
+          5,
+          2,
+          4,
+          1,
+          4,
+          2,
+          4,
+          1
+        ],
+        [
+          4,
+          2,
+          4,
+          2,
+          4,
+          2,
+          4,
+          2,
+          5,
+          1
+        ],
+        [
+          5,
+          1,
+          4,
+          1,
+          5,
+          2,
+          5,
+          1,
+          4,
+          2
+        ],
+        [
+          4,
+          2,
+          4,
+          1,
+          4,
+          1,
+          4,
+          3,
+          4,
+          2
+        ],
+        [
+          5,
+          2,
+          5,
+          1,
+          4,
+          2,
+          5,
+          2,
+          5,
+          1
+        ],
+        [
+          4,
+          1,
+          4,
+          2,
+          4,
+          1,
+          4,
+          2,
+          5,
+          2
+        ],
+        [
+          4,
+          2,
+          4,
+          1,
+          4,
+          2,
+          4,
+          2,
+          4,
+          1
+        ]
+      ],
+      "individual_scores": [
+        95.0,
+        80.0,
+        90.0,
+        85.0,
+        80.0,
+        90.0,
+        77.5,
+        90.0,
+        82.5,
+        80.0
+      ],
+      "mean_score": 85.0,
+      "median_score": 83.8,
+      "std_score": 5.59,
+      "baseline_threshold": 68.0,
+      "grade": "A",
+      "adjective": "Excelente",
+      "perceived_friction": "Mínima / Nula"
+    }
+  }
+}
